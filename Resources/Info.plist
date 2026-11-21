@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>tr</string>
+    </array>
+    <key>CFBundleExecutable</key>
+    <string>Keyshift</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.ozanhakantunca.keyshift</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Keyshift</string>
+    <key>CFBundleDisplayName</key>
+    <string>Keyshift</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@BUILD_NUMBER@</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © Keyshift contributors. Free software licensed under GPL-3.0-only.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Keyshift sends Apple events to apps when a rule opens an app or runs a system action.</string>
+</dict>
+</plist>

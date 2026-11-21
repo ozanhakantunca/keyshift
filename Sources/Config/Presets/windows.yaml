@@ -1,0 +1,167 @@
+# Keyshift preset: Windows habits
+# Ctrl shortcuts, Windows-style text navigation, Alt+F4, Win-key actions and Finder
+# keys (F2 rename, Enter open, Delete trash). Terminals and remote-desktop/VM/game apps
+# are left untouched.
+description: "Windows habits: Ctrl shortcuts, text navigation, Alt+F4, Win-key actions, Finder keys"
+version: 1
+profile: Windows
+settings:
+  tap_timeout_ms: 500
+
+app_groups:
+  terminals:
+    - com.apple.Terminal
+    - com.googlecode.iterm2
+    - com.mitchellh.ghostty
+    - org.alacritty
+    - net.kovidgoyal.kitty
+    - com.github.wez.wezterm
+    - co.zeit.hyper
+    - dev.warp.Warp-Stable
+  browsers:
+    - com.google.Chrome
+    - com.apple.Safari
+    - org.mozilla.firefox
+    - com.microsoft.edgemac
+    - company.thebrowser.Browser
+    - com.brave.Browser
+    - com.operasoftware.Opera
+  chromium_browsers:            # Downloads is ⇧⌘J here; ⌘J is "Jump to Selection" (Safari and Firefox have their own rules)
+    - com.google.Chrome
+    - com.microsoft.edgemac
+    - com.brave.Browser
+  # Apps that should receive keys untouched (they have their own shortcut logic)
+  remote_and_vm:
+    - com.microsoft.rdc.macos
+    - com.microsoft.rdc.mac
+    - com.parallels.desktop.console
+    - com.parallels.vm
+    - com.vmware.fusion
+    - org.virtualbox.app.VirtualBoxVM
+    - com.utmapp.UTM
+    - com.teamviewer.TeamViewer
+    - com.anydesk.anydesk
+    - com.citrix.XenAppViewer
+    - tv.parsec.www
+    - com.p5sys.jump.mac.viewer
+    - com.apple.ScreenSharing
+  # Games keep every key untouched. Entries with a "/" are path fragments, matched
+  # case-insensitively against the frontmost app's path (Steam, Epic, Riot installs).
+  games:
+    - /steamapps/common/
+    - /Epic Games/
+    - /League of Legends.app/
+
+profiles:
+  - name: Windows
+    rules:
+      # --- Finder (only when browsing files, not while renaming/typing) ---
+      - name: Finder
+        only: [com.apple.finder]
+        focus: not_text_input
+        map:
+          f2: return                  # rename
+          return: cmd+o               # open
+          keypad_enter: cmd+o
+          delete: cmd+backspace       # Delete = move to Trash
+          backspace: cmd+up           # Backspace = parent folder
+          alt+up: cmd+up
+          alt+left: cmd+left_bracket  # history back
+          alt+right: cmd+right_bracket
+          alt+return: cmd+i           # properties / Get Info
+          ctrl+shift+v: cmd+alt+v     # move copied files here
+
+      - name: Finder address bar
+        only: [com.apple.finder]
+        map:
+          ctrl+l: cmd+shift+g         # go to folder
+
+      # --- Browsers ---
+      - name: Safari downloads
+        only: [com.apple.Safari]
+        map:
+          ctrl+j: cmd+alt+l
+
+      - name: Browser downloads
+        only: [chromium_browsers]
+        map:
+          ctrl+j: cmd+shift+j
+
+      - name: Firefox downloads
+        only: [org.mozilla.firefox]
+        map:
+          ctrl+j: cmd+shift+y
+
+      - name: Browser shortcuts
+        only: [browsers]
+        map:
+          ctrl+[l r d]: cmd+$1        # address bar, reload, bookmark
+          ctrl+h: cmd+y               # history
+          ctrl+[0 1 2 3 4 5 6 7 8 9]: cmd+$1   # reset zoom / jump to tab N
+          ctrl+equal: cmd+equal       # zoom in
+          ctrl+minus: cmd+minus       # zoom out
+          f5: cmd+r                   # shift+f5 → hard reload (shift passes through)
+          alt+f4: cmd+shift+w         # close the whole window, not one tab
+
+      # --- Terminals: copy/paste on Ctrl+Shift, keep Ctrl+C = interrupt ---
+      - name: Terminal clipboard
+        only: [terminals]
+        map:
+          ctrl+shift+c: cmd+c
+          ctrl+shift+v: cmd+v
+          ctrl+backspace: ctrl+w      # delete previous word
+
+      # --- Everything else: Windows Ctrl shortcuts ---
+      - name: Ctrl shortcuts
+        except: [terminals, remote_and_vm, games]
+        passthrough: [shift]          # ctrl+shift+t → cmd+shift+t, ctrl+shift+z → cmd+shift+z …
+        map:
+          ctrl+[a c v x z s f g n o p t w b i u]: cmd+$1
+          ctrl+y: cmd+shift+z         # redo
+
+      # Browsers have their own Alt+F4 above (close the whole window)
+      - name: Close window
+        except: [terminals, remote_and_vm, games, browsers]
+        map:
+          alt+f4: cmd+w
+
+      - name: Text navigation
+        except: [terminals, remote_and_vm, games]
+        passthrough: [shift]          # shift+ctrl+left extends the selection
+        map:
+          ctrl+left: alt+left         # word left/right
+          ctrl+right: alt+right
+          ctrl+backspace: alt+backspace   # delete previous word
+          ctrl+delete: alt+delete         # delete next word
+          home: cmd+left              # start / end of line
+          end: cmd+right
+          ctrl+home: cmd+up           # start / end of document
+          ctrl+end: cmd+down
+
+      # --- Mouse ---
+      - name: Ctrl+click multi-select
+        except: [terminals, remote_and_vm, games]
+        map:
+          ctrl+left_click: cmd+left_click
+
+      # --- Windows key (physical ⌘ position on a PC keyboard) ---
+      - name: Windows key
+        except: [remote_and_vm, games]
+        map:
+          left_cmd: { tap: spotlight }        # tap Win = Start/search; held = still ⌘
+          cmd+e: { open: Finder }
+          cmd+l: { system: lock_screen }
+          cmd+d: { system: show_desktop }
+          cmd+shift+s: { system: screenshot_area }
+          f13: { system: screenshot }          # Print Screen = F13 on Mac keyboards (key code 105)
+          # Window tiling: Win+arrows (done through Accessibility; works on every macOS version)
+          cmd+left: { system: tile_left }
+          cmd+right: { system: tile_right }
+          cmd+up: ctrl+fn+f                   # macOS 15+ "Fill"; or { system: maximize }
+          cmd+down: cmd+m
+          # Virtual desktops: Win+Ctrl+←/→ = Mission Control "Move left/right a space" (⌃←/⌃→)
+          ctrl+cmd+left: ctrl+left
+          ctrl+cmd+right: ctrl+right
+          ctrl+escape: { system: spotlight }
+          ctrl+shift+escape: { open: "Activity Monitor" }
+          ctrl+alt+t: { open: Terminal }

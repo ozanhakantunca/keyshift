@@ -1,0 +1,48 @@
+# Keyshift preset: Terminal fixes
+# Makes Ctrl+arrows, Home/End, Ctrl+Backspace/Delete behave like on Linux/Windows
+# inside terminal emulators, and adds Ctrl+Shift+C/V/T/N/W. Plain Ctrl+C stays "interrupt".
+description: "Terminal fixes: word jump/delete with Ctrl, Home/End, Ctrl+Shift+C/V"
+version: 1
+profile: Terminal
+settings:
+  tap_timeout_ms: 500
+
+app_groups:
+  terminals:
+    - com.apple.Terminal
+    - com.googlecode.iterm2
+    - com.mitchellh.ghostty
+    - org.alacritty
+    - net.kovidgoyal.kitty
+    - com.github.wez.wezterm
+    - co.zeit.hyper
+    - dev.warp.Warp-Stable
+
+profiles:
+  - name: Terminal
+    rules:
+      - name: Clipboard and tabs
+        only: [terminals]
+        map:
+          ctrl+shift+c: cmd+c
+          ctrl+shift+v: cmd+v
+          ctrl+shift+t: cmd+t
+          ctrl+shift+n: cmd+n
+          ctrl+shift+w: cmd+w
+          ctrl+shift+f: cmd+f
+
+      - name: Word and line navigation
+        only: [terminals]
+        passthrough: [shift]
+        map:
+          ctrl+left: alt+left           # jump word
+          ctrl+right: alt+right
+          home: ctrl+a                  # line start / end (readline)
+          end: ctrl+e
+
+      - name: Word delete
+        only: [terminals]
+        passthrough: []
+        map:
+          ctrl+backspace: ctrl+w        # delete previous word
+          ctrl+delete: alt+d            # delete next word

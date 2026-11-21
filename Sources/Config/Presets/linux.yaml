@@ -1,0 +1,126 @@
+# Keyshift preset: Linux / GNOME habits
+# Ctrl shortcuts, GNOME Super-key actions, Files (Nautilus) keys, Print Screen,
+# workspace switching with Ctrl+Alt+arrows. Terminals keep Ctrl+Shift+C/V for clipboard.
+description: "Linux / GNOME habits: Ctrl shortcuts, Super-key actions, Files keys, workspace switching"
+version: 1
+profile: Linux
+settings:
+  tap_timeout_ms: 500
+
+app_groups:
+  terminals:
+    - com.apple.Terminal
+    - com.googlecode.iterm2
+    - com.mitchellh.ghostty
+    - org.alacritty
+    - net.kovidgoyal.kitty
+    - com.github.wez.wezterm
+    - co.zeit.hyper
+    - dev.warp.Warp-Stable
+  browsers:
+    - com.google.Chrome
+    - com.apple.Safari
+    - org.mozilla.firefox
+    - com.microsoft.edgemac
+    - company.thebrowser.Browser
+    - com.brave.Browser
+    - com.operasoftware.Opera
+  remote_and_vm:
+    - com.microsoft.rdc.macos
+    - com.parallels.desktop.console
+    - com.parallels.vm
+    - com.vmware.fusion
+    - org.virtualbox.app.VirtualBoxVM
+    - com.utmapp.UTM
+    - com.teamviewer.TeamViewer
+    - com.apple.ScreenSharing
+  # Games keep every key untouched. Entries with a "/" are path fragments, matched
+  # case-insensitively against the frontmost app's path (Steam, Epic, Riot installs).
+  games:
+    - /steamapps/common/
+    - /Epic Games/
+    - /League of Legends.app/
+
+profiles:
+  - name: Linux
+    rules:
+      # --- Files (Nautilus-style) ---
+      - name: Files
+        only: [com.apple.finder]
+        focus: not_text_input
+        map:
+          f2: return                    # rename
+          return: cmd+o                 # open
+          delete: cmd+backspace         # Delete = move to Trash
+          alt+up: cmd+up                # parent folder
+          alt+left: cmd+left_bracket    # back / forward
+          alt+right: cmd+right_bracket
+          alt+return: cmd+i             # properties
+          ctrl+h: cmd+shift+period      # toggle hidden files
+          ctrl+l: cmd+shift+g           # location bar
+
+      - name: Terminal clipboard
+        only: [terminals]
+        map:
+          ctrl+shift+c: cmd+c
+          ctrl+shift+v: cmd+v
+          ctrl+shift+t: cmd+t           # new tab
+          ctrl+shift+n: cmd+n           # new window
+          ctrl+shift+w: cmd+w
+
+      - name: Browser shortcuts
+        only: [browsers]
+        map:
+          ctrl+[l r d j]: cmd+$1
+          ctrl+h: cmd+y
+          ctrl+[0 1 2 3 4 5 6 7 8 9]: cmd+$1
+          ctrl+equal: cmd+equal
+          ctrl+minus: cmd+minus
+          f5: cmd+r
+          alt+f4: cmd+shift+w
+
+      - name: Ctrl shortcuts
+        except: [terminals, remote_and_vm, games]
+        passthrough: [shift]
+        map:
+          ctrl+[a c v x z s f g n o p t w b i u q]: cmd+$1
+          ctrl+y: cmd+shift+z
+
+      - name: Close window
+        except: [terminals, remote_and_vm, games, browsers]
+        map:
+          alt+f4: cmd+w
+
+      - name: Text navigation
+        except: [terminals, remote_and_vm, games]
+        passthrough: [shift]
+        map:
+          ctrl+left: alt+left
+          ctrl+right: alt+right
+          ctrl+backspace: alt+backspace
+          ctrl+delete: alt+delete
+          home: cmd+left
+          end: cmd+right
+          ctrl+home: cmd+up
+          ctrl+end: cmd+down
+
+      - name: Mouse
+        except: [terminals, remote_and_vm, games]
+        map:
+          ctrl+left_click: cmd+left_click
+
+      # --- GNOME shell ---
+      - name: Super key and workspaces
+        except: [remote_and_vm, games]
+        map:
+          left_cmd: { tap: mission_control }   # tap Super = Activities overview
+          cmd+a: { system: launchpad }         # app grid
+          cmd+d: { system: show_desktop }
+          cmd+l: { system: lock_screen }
+          f13: { system: screenshot }          # Print Screen = F13 on Mac keyboards (key code 105)
+          shift+f13: { system: screenshot_area }
+          alt+f13: { system: screenshot_window }
+          ctrl+alt+left: ctrl+left             # previous / next desktop
+          ctrl+alt+right: ctrl+right
+          ctrl+alt+delete: { system: logout }
+          ctrl+alt+t: { open: Terminal }

@@ -1,0 +1,26 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - run: swift build
+      - run: swift test
+      - name: Validate presets
+        run: ruby -ryaml -e 'Dir["Presets/*.yaml"].each { |f| YAML.load_file(f) }'
+      - run: scripts/build-app.sh --arch universal
+      - run: ditto -c -k --keepParent dist/Keyshift.app dist/Keyshift.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Keyshift
+          path: dist/Keyshift.zip
