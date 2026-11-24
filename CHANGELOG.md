@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- The setup window scrolls when a config file with errors makes the starting-point step taller
+  than the window.
+
+### Changed
+
+- Updated the YAML parser (Yams 6). A duplicated YAML key is now reported once per key.
+
 ## [0.1.1] - 2026-11-24
 
 ### Fixed

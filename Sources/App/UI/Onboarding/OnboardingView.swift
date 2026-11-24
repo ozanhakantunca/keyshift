@@ -64,7 +64,9 @@ struct OnboardingView: View {
                 switch step {
                 case .welcome: welcome
                 case .permissions: permissions
-                case .origin: originPicker
+                case .origin:
+                    // The error banner makes this step taller than the fixed window.
+                    if model.configHasErrors { ScrollView { originPicker } } else { originPicker }
                 case .done: done
                 }
             }
