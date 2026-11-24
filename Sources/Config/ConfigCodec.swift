@@ -90,14 +90,11 @@ public enum ConfigCodec {
         case let .scanner(_, problem, mark, _), let .parser(_, problem, mark, _),
              let .composer(_, problem, mark, _):
             return [Diagnostic(line: mark.line, message: problem)]
-        case let .duplicatedKeysInMapping(duplicates, _):
-            let diagnostics = duplicates.values.flatMap { nodes in
-                nodes.sorted { ($0.mark?.line ?? 0, $0.mark?.column ?? 0) <
-                    ($1.mark?.line ?? 0, $1.mark?.column ?? 0) }.dropFirst().map { node in
-                    Diagnostic(line: node.mark?.line, message: "Duplicate YAML key '\(node.scalar?.string ?? "")'.")
-                }
+        case let .duplicatedKeysInMapping(duplicates, context):
+            // Yams reports the keys and one position (an occurrence of the first key).
+            return duplicates.enumerated().map { index, key in
+                Diagnostic(line: index == 0 ? context.mark.line : nil, message: "Duplicate YAML key '\(key)'.")
             }
-            return diagnostics.sorted { ($0.line ?? 0, $0.message) < ($1.line ?? 0, $1.message) }
         default:
             return [Diagnostic(message: String(describing: error))]
         }
