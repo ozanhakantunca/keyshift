@@ -54,6 +54,9 @@ struct OnboardingView: View {
     @State private var origin: Origin = .windows
     @State private var importError: String?
     @State private var importSummary: String?
+    @State private var importedShellCommands = 0
+    /// Explicit choice to overwrite a config file that exists but has errors.
+    @State private var replaceInvalidFile = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -133,11 +136,25 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 16) {
             stepTitle(String(localized: "Where are you coming from?"),
                       String(localized: "Pick a starting point. You can change everything later or add more presets."))
+            if model.configHasErrors {
+                Banner(style: .error, title: String(localized: "Your config file has errors")) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Keyshift leaves it unchanged unless you choose to replace it. The current file is then kept as config.yaml.invalid.bak.")
+                            .fixedSize(horizontal: false, vertical: true)
+                        Toggle(String(localized: "Replace my config file with this starting point"), isOn: $replaceInvalidFile)
+                            .toggleStyle(.checkbox)
+                            .foregroundStyle(.primary)
+                    }
+                } actions: {
+                    Button(String(localized: "Open in Editor")) { model.openConfigInEditor() }
+                }
+            }
             VStack(spacing: 8) {
                 ForEach(availableOrigins) { option in
                     OriginRow(option: option, selected: origin == option) { origin = option }
                 }
             }
+            .disabled(model.configHasErrors && !replaceInvalidFile)
         }
     }
 
@@ -149,6 +166,11 @@ struct OnboardingView: View {
             Text("You're all set").font(.largeTitle.weight(.semibold))
             if let importSummary {
                 Text(importSummary).foregroundStyle(.secondary)
+            }
+            if importedShellCommands > 0 {
+                Label(String(localized: "\(importedShellCommands) imported shortcuts run shell commands. Review them in Settings → Rules."),
+                      systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
             }
             VStack(alignment: .leading, spacing: 12) {
                 feature("keyboard", String(localized: "Keyshift lives in the menu bar. Click its icon to switch profiles or open Settings."))
@@ -219,19 +241,26 @@ struct OnboardingView: View {
     }
 
     private func applyOrigin() {
+        // A file that exists but has errors is only replaced when the user ticked the box.
+        if model.configHasErrors && !replaceInvalidFile {
+            next()
+            return
+        }
+        let replace = model.configHasErrors && replaceInvalidFile
         switch origin {
         case .windows, .linux, .terminal:
-            if let id = origin.presetID { model.applyPreset(id) }
+            if let id = origin.presetID { model.applyPreset(id, overridingErrors: replace) }
         case .karabiner:
             do {
-                let report = try model.importKarabiner()
+                let report = try model.importKarabiner(overridingErrors: replace)
                 importSummary = String(localized: "Imported \(report.importedCount) shortcuts from Karabiner-Elements (\(report.skippedCount) skipped).")
+                importedShellCommands = report.shellCommands.count
             } catch {
                 importError = error.localizedDescription
                 return
             }
         case .empty:
-            model.update { config in
+            model.update(overridingErrors: replace) { config in
                 config.editActiveProfile { _ in }
             }
         }

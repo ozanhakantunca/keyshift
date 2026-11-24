@@ -40,8 +40,13 @@ evrensel bir çalıştırılabilir dosya içerir.
 
 ### İndirerek (DMG)
 
-1. [GitHub sürümlerinden](https://github.com/ozanhakantunca/keyshift/releases) `Keyshift-0.1.0.dmg`
-   dosyasını indirin ve **Keyshift**'i **Uygulamalar** klasörüne sürükleyin.
+1. [GitHub sürümlerinden](https://github.com/ozanhakantunca/keyshift/releases) `Keyshift-x.y.z.dmg`
+   dosyasını indirin ve **Keyshift**'i **Uygulamalar** klasörüne sürükleyin. İndirdiğiniz dosyayı
+   doğrulamak için `Keyshift-x.y.z.dmg.sha256` dosyasını da aynı klasöre indirip şunu çalıştırın:
+
+   ```sh
+   shasum -a 256 -c Keyshift-*.dmg.sha256
+   ```
 2. Uygulama kendinden imzalı bir sertifikayla imzalanmıştır. Apple'ın noter onayı bulunmadığı için
    ilk açılış engellenir. Uygulamayı bir kez açmayı deneyin, ardından
    **Sistem Ayarları → Gizlilik ve Güvenlik** bölümünden **Yine de Aç**'ı seçin.
@@ -63,6 +68,12 @@ cd keyshift
 ./scripts/create-signing-cert.sh   # bir kez çalıştırın, izinler sonraki derlemelerde korunsun
 ./scripts/install.sh --with-cli    # derler, kurar ve keyshift komutunu bağlar
 ```
+
+`create-signing-cert.sh` sertifikayı giriş anahtar zincirinize ekler; bunun için anahtar zincirinin
+kilidinin açılması gerekir, bu yüzden oturum parolanızı sorar (yazdıkça görünmez; yalnızca o çalıştırma
+için kullanılır, saklanmaz ve yazdırılmaz). Etkileşimsiz kullanımda parolayı `KEYSHIFT_KEYCHAIN_PASSWORD`
+ile verin ya da `--keychain <yol>` ile ayrı bir anahtar zinciri kullanın. Sertifika zaten varsa hiçbir
+şey sorulmaz.
 
 ### İzinler
 
@@ -162,8 +173,21 @@ Ayarlar'da inceleyebilirsiniz.
 ## Kaldırma
 
 Keyshift'ten çıkın ve uygulamayı Uygulamalar klasöründen Çöp Sepeti'ne taşıyın. Kaynak kod
-klasöründe `./scripts/uninstall.sh` komutunu çalıştırırsanız komut satırı bağlantısı da kaldırılır.
-`~/.config/keyshift` klasörünü silmek için `--purge-config` seçeneğini ekleyin.
+klasöründe `./scripts/uninstall.sh` komutunu çalıştırırsanız komut satırı bağlantısı (elle kaldırmadan
+sonra boşta kalmış olsa bile) da kaldırılır ve nelerin kaldırıldığı, nelerin kaldığı yazdırılır.
+`~/.config/keyshift` klasörünü silmek için `--purge-config`, Erişilebilirlik ve Giriş İzleme izinlerini
+sıfırlamak için `--reset-permissions` seçeneğini ekleyin.
+
+Uygulamayı elle kaldırırsanız şunlar geride kalır:
+
+- **Giriş öğesi.** Oturum açılışında başlatma açıksa (varsayılan) kaldırmadan önce Keyshift
+  Ayarlar'ından kapatın ya da **Sistem Ayarları → Genel → Giriş Öğeleri ve Uzantılar** bölümünden
+  Keyshift'i kaldırın.
+- **İzinler.** **Gizlilik ve Güvenlik → Erişilebilirlik** ve **Giriş İzleme** listelerinden Keyshift'i
+  kaldırın ya da `tccutil reset All io.github.ozanhakantunca.keyshift` komutunu çalıştırın.
+- **Komut satırı bağlantısı.** `--with-cli` ile kurduysanız boşta kalan bağlantıyı silin:
+  `rm /usr/local/bin/keyshift` veya `rm ~/.local/bin/keyshift`.
+- **Ayarlar.** `rm -r ~/.config/keyshift`.
 
 ## Karabiner-Elements ile karşılaştırma
 

@@ -11,7 +11,7 @@ public enum SystemShortcuts {
         var combo: KeyCombo {
             var modifiers = SystemShortcuts.modifiers(fromMask: flags)
             // The preference records the intrinsic Fn bit for arrows and function keys.
-            if EventCodec.hasIntrinsicFnFlag(key) { modifiers.remove(.function) }
+            if key.hasImplicitFn { modifiers.remove(.function) }
             return KeyCombo(key, modifiers)
         }
     }

@@ -141,6 +141,39 @@ final class ConfigCodecTests: XCTestCase {
         XCTAssertNotNil(diagnostics.first?.line)
     }
 
+    func testRejectsAliasBombsWithoutExpandingThem() {
+        // Each level repeats the previous one ten times: about 10^9 nodes once aliases are expanded.
+        var lines = ["l0: &l0 [x, x, x, x, x, x, x, x, x, x]"]
+        for level in 1...9 {
+            lines.append("l\(level): &l\(level) [" + Array(repeating: "*l\(level - 1)", count: 10).joined(separator: ", ") + "]")
+        }
+        lines.append("profiles: [{name: Bomb}]")
+        let start = Date()
+        let decoded = ConfigCodec.decodeDocument(lines.joined(separator: "\n"))
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+        XCTAssertFalse(decoded.hasUsableRoot)
+        XCTAssertEqual(decoded.config, Config())
+        XCTAssertEqual(decoded.diagnostics.count, 1)
+        XCTAssertTrue(decoded.diagnostics[0].message.contains("aliases"))
+    }
+
+    func testSmallAliasesStillWorkAndSyntaxErrorsHaveNoUsableRoot() {
+        let yaml = "app_groups:\n  a: &apps [com.apple.Terminal]\n  b: *apps\nprofiles: [{name: P}]\n"
+        let decoded = ConfigCodec.decodeDocument(yaml)
+        XCTAssertTrue(decoded.hasUsableRoot)
+        XCTAssertEqual(decoded.diagnostics, [])
+        XCTAssertEqual(decoded.config.appGroups["b"], ["com.apple.Terminal"])
+        XCTAssertFalse(ConfigCodec.decodeDocument("profiles: [\n").hasUsableRoot)
+        XCTAssertFalse(ConfigCodec.decodeDocument("just text").hasUsableRoot)
+        XCTAssertTrue(ConfigCodec.decodeDocument("").hasUsableRoot)
+    }
+
+    func testUnknownFieldWarningSaysItIsRemovedOnSave() {
+        let (_, diagnostics) = ConfigCodec.decode("colour: blue\nprofiles: []\n")
+        XCTAssertEqual(diagnostics.map(\.severity), [.warning])
+        XCTAssertTrue(diagnostics[0].message.contains("removed when Keyshift saves"))
+    }
+
     func testEncodesSemanticDuplicateTriggersInOrder() {
         let yaml = """
         profiles:

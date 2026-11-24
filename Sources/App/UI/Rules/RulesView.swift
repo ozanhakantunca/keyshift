@@ -14,6 +14,8 @@ struct RuleSheetTarget: Identifiable {
 struct MappingSheetTarget: Identifiable {
     let id = UUID()
     var ruleID: UUID
+    /// The rule as shown when the sheet opened, to verify a fallback by index.
+    var rule: Rule
     var ruleIndex: Int?
     var mapping: Mapping?
     var mappingIndex: Int?
@@ -107,7 +109,17 @@ struct RulesView: View {
                     .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
                 }
                 .onMove { from, to in
-                    model.update { config in config.editActiveProfile { $0.rules.move(fromOffsets: from, toOffset: to) } }
+                    let shown = profile.rules
+                    model.update { config in
+                        try config.editActiveProfile { current in
+                            // Indices refer to the list on screen; refuse if a reload changed it.
+                            guard current.rules.count == shown.count,
+                                  zip(current.rules, shown).allSatisfy({ $0.contentEqual($1) }) else {
+                                throw ConfigEditError.changedOnDisk
+                            }
+                            current.rules.move(fromOffsets: from, toOffset: to)
+                        }
+                    }
                 }
                 Text("Rules are checked from top to bottom; the first matching shortcut wins. Drag cards to reorder.")
                     .font(.caption)
@@ -144,20 +156,24 @@ struct RulesView: View {
             move: { offset in move(rule, index: index, by: offset) },
             setEnabled: { enabled in
                 model.update { config in
-                    config.editActiveProfile { profile in
-                        if let i = profile.ruleIndex(id: rule.id, fallback: index) { profile.rules[i].enabled = enabled }
+                    try config.editActiveProfile { profile in
+                        if let i = try profile.ruleIndex(id: rule.id, fallback: index, snapshot: rule) {
+                            profile.rules[i].enabled = enabled
+                        }
                     }
                 }
             },
-            addMapping: { mappingSheet = MappingSheetTarget(ruleID: rule.id, ruleIndex: index) },
+            addMapping: { mappingSheet = MappingSheetTarget(ruleID: rule.id, rule: rule, ruleIndex: index) },
             editMapping: { mapping, mappingIndex in
-                mappingSheet = MappingSheetTarget(ruleID: rule.id, ruleIndex: index, mapping: mapping, mappingIndex: mappingIndex)
+                mappingSheet = MappingSheetTarget(ruleID: rule.id, rule: rule, ruleIndex: index,
+                                                  mapping: mapping, mappingIndex: mappingIndex)
             },
             deleteMapping: { mapping, mappingIndex in
                 model.update { config in
-                    config.editActiveProfile { profile in
-                        guard let r = profile.ruleIndex(id: rule.id, fallback: index),
-                              let m = profile.rules[r].mappingIndex(id: mapping.id, fallback: mappingIndex) else { return }
+                    try config.editActiveProfile { profile in
+                        guard let r = try profile.ruleIndex(id: rule.id, fallback: index, snapshot: rule),
+                              let m = try profile.rules[r].mappingIndex(id: mapping.id, fallback: mappingIndex,
+                                                                        snapshot: mapping) else { return }
                         profile.rules[r].mappings.remove(at: m)
                     }
                 }
@@ -173,19 +189,19 @@ struct RulesView: View {
     private func save(_ rule: Rule, target: RuleSheetTarget) {
         var insertedIndex: Int?
         model.update { config in
-            config.editActiveProfile { profile in
+            try config.editActiveProfile { profile in
                 if target.isNew {
                     profile.rules.append(rule)
                     insertedIndex = profile.rules.count - 1
-                } else if let i = profile.ruleIndex(id: rule.id, fallback: target.index) {
+                } else if let i = try profile.ruleIndex(id: rule.id, fallback: target.index, snapshot: target.rule) {
                     var updated = rule
                     updated.mappings = profile.rules[i].mappings // mappings are edited separately
                     profile.rules[i] = updated
                 }
             }
         }
-        if target.isNew {
-            pendingMappingSheet = MappingSheetTarget(ruleID: rule.id, ruleIndex: insertedIndex)
+        if target.isNew, insertedIndex != nil {
+            pendingMappingSheet = MappingSheetTarget(ruleID: rule.id, rule: rule, ruleIndex: insertedIndex)
         }
     }
 
@@ -195,8 +211,8 @@ struct RulesView: View {
         copy.name = String(localized: "\(rule.name) copy")
         copy.mappings = rule.mappings.map { var m = $0; m.id = UUID(); return m }
         model.update { config in
-            config.editActiveProfile { profile in
-                let at = (profile.ruleIndex(id: rule.id, fallback: index) ?? profile.rules.count - 1) + 1
+            try config.editActiveProfile { profile in
+                let at = (try profile.ruleIndex(id: rule.id, fallback: index, snapshot: rule) ?? profile.rules.count - 1) + 1
                 profile.rules.insert(copy, at: min(at, profile.rules.count))
             }
         }
@@ -204,8 +220,8 @@ struct RulesView: View {
 
     private func move(_ rule: Rule, index: Int, by offset: Int) {
         model.update { config in
-            config.editActiveProfile { profile in
-                guard let i = profile.ruleIndex(id: rule.id, fallback: index) else { return }
+            try config.editActiveProfile { profile in
+                guard let i = try profile.ruleIndex(id: rule.id, fallback: index, snapshot: rule) else { return }
                 let j = i + offset
                 guard profile.rules.indices.contains(j) else { return }
                 profile.rules.swapAt(i, j)
@@ -216,8 +232,8 @@ struct RulesView: View {
     private func delete(_ rule: Rule) {
         let index = model.activeProfile?.rules.firstIndex { $0.id == rule.id }
         model.update { config in
-            config.editActiveProfile { profile in
-                if let i = profile.ruleIndex(id: rule.id, fallback: index) { profile.rules.remove(at: i) }
+            try config.editActiveProfile { profile in
+                if let i = try profile.ruleIndex(id: rule.id, fallback: index, snapshot: rule) { profile.rules.remove(at: i) }
             }
         }
         ruleToDelete = nil

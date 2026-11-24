@@ -1,0 +1,43 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "15.1"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Keyshift version
+      description: Shown in the menu bar menu, or by `keyshift --version`.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: keyboard
+    attributes:
+      label: Keyboard and layout
+      placeholder: "Apple Magic Keyboard, Turkish Q"
+    validations:
+      required: true
+  - type: textarea
+    id: mapping
+    attributes:
+      label: Mapping involved
+      description: The rule or preset (YAML) and the app it applies to.
+      render: yaml
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of `keyshift status`
+      render: text
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce, expected and actual result
+    validations:
+      required: true

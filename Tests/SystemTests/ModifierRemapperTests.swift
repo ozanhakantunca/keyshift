@@ -47,6 +47,47 @@ final class ModifierRemapperTests: XCTestCase {
         XCTAssertEqual(rules.last?.mappings, kept)
     }
 
+    func testRemovingLeftoversDropsOnlyExactEarlierPairs() {
+        let caps = ModifierRemapper.Remap(source: 0x07_0000_0039, destination: 0x07_0000_0029)
+        let src = "HIDKeyboardModifierMappingSrc", dst = "HIDKeyboardModifierMappingDst"
+        let map: [[String: Any]] = [
+            [src: NSNumber(value: caps.source), dst: NSNumber(value: caps.destination)],
+            [src: NSNumber(value: caps.source), dst: NSNumber(value: 0x07_0000_00E0 as UInt64)],
+            [src: NSNumber(value: 0x07_0000_00E0 as UInt64), dst: NSNumber(value: 0x07_0000_00E3 as UInt64)],
+            ["Unrelated": "value"],
+        ]
+        let cleaned = ModifierRemapper.removingLeftovers(map, [caps])
+        XCTAssertEqual(cleaned.count, 3)
+        XCTAssertEqual((cleaned[0][dst] as? NSNumber)?.uint64Value, 0x07_0000_00E0)
+        XCTAssertEqual(ModifierRemapper.removingLeftovers(map, []).count, 4)
+    }
+
+    func testLedgerReportsOnlyEarlierProcessesRemaps() throws {
+        let suite = "io.github.ozanhakantunca.keyshift.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let caps = ModifierRemapper.Remap(source: 0x07_0000_0039, destination: 0x07_0000_0029)
+        let ctrl = ModifierRemapper.Remap(source: 0x07_0000_00E0, destination: 0x07_0000_00E3)
+
+        // A crashed run left both pairs installed.
+        let crashed = UserDefaultsRemapLedger(owner: "app", defaults: defaults, session: "old")
+        crashed.record([caps, ctrl])
+        XCTAssertEqual(crashed.leftovers(), [])
+
+        let app = UserDefaultsRemapLedger(owner: "app", defaults: defaults, session: "new")
+        let selfTest = UserDefaultsRemapLedger(owner: "self-test", defaults: defaults, session: "new")
+        XCTAssertEqual(Set(app.leftovers()), [caps, ctrl])
+        // A pair this process installs itself is never a leftover for another owner.
+        app.record([caps])
+        XCTAssertEqual(selfTest.leftovers(), [ctrl])
+
+        app.forgetLeftovers()
+        XCTAssertEqual(app.leftovers(), [])
+        XCTAssertEqual(UserDefaultsRemapLedger(owner: "app", defaults: defaults, session: "next").leftovers(), [caps])
+        app.clear()
+        XCTAssertNil(defaults.object(forKey: UserDefaultsRemapLedger.key))
+    }
+
     private func mapping(_ input: String, _ output: String, tapAlone: Bool = false) throws -> Mapping {
         Mapping(trigger: try XCTUnwrap(Trigger(parsing: input)),
                 action: .keys([try XCTUnwrap(KeyCombo(parsing: output))]), isTapAlone: tapAlone)

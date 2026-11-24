@@ -19,14 +19,17 @@ An existing identity is left unchanged and exits successfully, including when
   --help             Show this help.
 
 Environment:
-  KEYSHIFT_KEYCHAIN_PASSWORD  Required for an EXISTING keychain when importing.
-                           For a new keychain, generated and printed if unset.
+  KEYSHIFT_KEYCHAIN_PASSWORD  Password of an EXISTING keychain, needed to unlock it for the
+                           import. If unset and stdin is a terminal, you are prompted
+                           (input hidden); otherwise the script stops with an error.
+                           For a NEW keychain, generated (and not printed) if unset.
   KEYSHIFT_P12_PASSWORD       Export password; generated and printed if unset.
 
 Existing identities need neither password. Import unlocks the selected keychain
 and grants /usr/bin/codesign access with security import -T. No
 sudo, trust-store changes, or GUI password prompts are used. For login, supply
-its current password through KEYSHIFT_KEYCHAIN_PASSWORD before first creation.
+its current password (prompted, or via KEYSHIFT_KEYCHAIN_PASSWORD) before first creation.
+The password is only used for this run and is never stored or printed.
 Use a dedicated --keychain for unattended builds to avoid the login keychain.
 For signing, that keychain must also be in the user's keychain search list;
 --keychain only restricts identity lookup, as documented in man codesign.
@@ -82,8 +85,16 @@ if [ -f "$keychain" ]; then
     if security find-certificate -c 'Keyshift Self-Signed' "$keychain" >/dev/null 2>&1; then
         keyshift_die 'Certificate exists without a usable Code Signing identity; restore its original P12 instead of replacing it.'
     fi
-    [ -n "${KEYSHIFT_KEYCHAIN_PASSWORD:-}" ] ||
-        keyshift_die 'Set KEYSHIFT_KEYCHAIN_PASSWORD to this existing keychain password (avoids interactive prompts).'
+    if [ -z "${KEYSHIFT_KEYCHAIN_PASSWORD:-}" ]; then
+        if [ -t 0 ]; then
+            # Importing a signing key into an existing keychain needs it unlocked.
+            printf 'Password for keychain %s (input hidden): ' "$keychain" >&2
+            IFS= read -rs KEYSHIFT_KEYCHAIN_PASSWORD
+            printf '\n' >&2
+        fi
+        [ -n "${KEYSHIFT_KEYCHAIN_PASSWORD:-}" ] ||
+            keyshift_die 'Keychain password required: set KEYSHIFT_KEYCHAIN_PASSWORD or run from a terminal to be prompted.'
+    fi
 fi
 if [ -n "$export_path" ]; then
     case "$export_path" in /*) ;; *) export_path="$PWD/$export_path" ;; esac
@@ -98,14 +109,15 @@ keychain_password=${KEYSHIFT_KEYCHAIN_PASSWORD:-}
 if [ ! -f "$keychain" ]; then
     [ -d "$(dirname "$keychain")" ] || keyshift_die 'The keychain parent directory must already exist.'
     if [ -z "$keychain_password" ]; then
-        keychain_password=$(openssl rand -hex 24)
-        printf 'Generated keychain password (save securely): %s\n' "$keychain_password"
+        keychain_password=$(openssl rand -hex 24)  # not printed; set KEYSHIFT_KEYCHAIN_PASSWORD to choose your own
     fi
     security create-keychain -p "$keychain_password" "$keychain" || keyshift_die 'Could not create keychain.'
     if [ ! -f "$keychain" ] && [ -f "$keychain-db" ]; then keychain="$keychain-db"; fi
     # Limit this setting to a keychain we created; do not change login settings.
     security set-keychain-settings -lut 21600 "$keychain"
 fi
+# Note: /usr/bin/security only accepts passwords as arguments (no stdin option), so they are briefly
+# visible in the process list to this user's processes.
 security unlock-keychain -p "$keychain_password" "$keychain" || keyshift_die 'Could not unlock keychain; check KEYSHIFT_KEYCHAIN_PASSWORD.'
 
 cat > "$temp_dir/openssl.cnf" <<'CONFIG'

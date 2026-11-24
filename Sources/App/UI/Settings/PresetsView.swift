@@ -69,9 +69,19 @@ private struct PresetCard: View {
     let preset: PresetInfo
     let onAdd: () -> Void
 
+    /// Bundled presets never change while the app runs; decode each once, not on every render.
+    @MainActor private static var counts: [String: Int] = [:]
+
+    private var count: Int {
+        if let count = Self.counts[preset.id] { return count }
+        let count = Presets.load(preset.id)?.0.rules.reduce(0) { $0 + $1.mappings.count } ?? 0
+        Self.counts[preset.id] = count
+        return count
+    }
+
     var body: some View {
         let text = UIText.splitPresetDescription(preset)
-        let count = Presets.load(preset.id)?.0.rules.reduce(0) { $0 + $1.mappings.count } ?? 0
+        let count = self.count
         let inUse = model.config.profiles.contains { $0.name == preset.name }
         GalleryCard(symbol: UIText.presetSymbol(preset.id), tint: .accentColor) {
             Text(text.title).font(.headline)
@@ -170,6 +180,23 @@ struct ImportReportSheet: View {
                     Text("\(report.importedCount) imported · \(report.skippedCount) skipped")
                         .foregroundStyle(.secondary)
                 }
+            }
+            if !report.shellCommands.isEmpty {
+                Banner(style: .warning, title: report.shellCommands.count == 1
+                    ? String(localized: "1 imported shortcut runs a shell command")
+                    : String(localized: "\(report.shellCommands.count) imported shortcuts run shell commands")) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("They are active now. Check that you trust each command, or delete the shortcut in Rules.")
+                        ScrollView {
+                            Text(report.shellCommands.joined(separator: "\n"))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.primary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 120)
+                    }
+                } actions: { EmptyView() }
             }
             if !report.skippedByReason.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {

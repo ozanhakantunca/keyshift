@@ -106,7 +106,8 @@ enum CLI {
     private static func send(_ request: CLIRequest, to port: CFMessagePort) throws -> CLIResponse {
         let data = try CLICoding.encode(request)
         var reply: Unmanaged<CFData>?
-        let timeout: CFTimeInterval = request.command == .selftest && request.argument == "--suite" ? 40 : 5
+        let isLong = request.command == .importKarabiner || (request.command == .selftest && request.argument == "--suite")
+        let timeout: CFTimeInterval = isLong ? 40 : 5
         let status = CFMessagePortSendRequest(port, 1, data as CFData, 2, timeout, CFRunLoopMode.defaultMode.rawValue, &reply)
         guard status == kCFMessagePortSuccess, let result = reply?.takeRetainedValue() else {
             throw CLIProtocolError.transport(status)
@@ -127,14 +128,14 @@ enum CLI {
                 profile: config.activeProfile?.name,
                 permissions: PermissionState(accessibility: Permissions.accessibility(),
                                              inputMonitoring: Permissions.inputMonitoring()),
-                karabinerRunning: KarabinerDetector.isRunning(), diagnostics: diagnostics.count,
-                conflicts: conflicts.count, startError: nil
+                karabinerRunning: KarabinerDetector.isRunning(), secureInput: SecureInput.isEnabled(),
+                diagnostics: diagnostics.count, conflicts: conflicts.count, startError: nil
             ))
         case .profile:
             if let name = request.argument {
-                var config = try editableConfig(in: store)
+                var (config, contents) = try editableConfig(in: store)
                 try ConfigEdits.select(name, in: &config)
-                try store.save(config)
+                try store.save(config, condition: .unchangedSince(contents))
                 return CLIResponse(lines: ["Selected profile: \(name)"])
             }
             let (config, diagnostics) = store.load() ?? (Config(), [])
@@ -144,9 +145,9 @@ enum CLI {
             let url = request.argument.map(fileURL) ?? ConfigEdits.defaultKarabinerURL
             let (incoming, report) = try KarabinerImporter.importFile(at: url)
             if !incoming.profiles.isEmpty {
-                var config = try editableConfig(in: store)
+                var (config, contents) = try editableConfig(in: store)
                 ConfigEdits.append(incoming, to: &config)
-                try store.save(config)
+                try store.save(config, condition: .unchangedSince(contents))
             }
             return CLIResponse(lines: importLines(report))
         case .reload, .selftest, .open, .enable, .disable:
@@ -154,17 +155,21 @@ enum CLI {
         }
     }
 
-    private static func editableConfig(in store: ConfigStore) throws -> Config {
-        let (config, diagnostics) = store.load() ?? (Config(), [])
-        guard !ConfigEdits.hasErrors(diagnostics) else { throw ConfigEditError.invalidConfig(store.url) }
-        return config
+    /// The config to edit and the bytes it was read from (nil: no file yet).
+    private static func editableConfig(in store: ConfigStore) throws -> (Config, Data?) {
+        guard let loaded = store.loadDetailed() else { return (Config(), nil) }
+        guard !loaded.hasErrors else { throw ConfigEditError.invalidConfig(store.url) }
+        return (loaded.config, loaded.contents)
     }
 
     private static func check(_ url: URL) throws -> CLIResponse {
         let store = ConfigStore(url: url)
-        guard let (config, diagnostics) = store.load() else {
+        guard let (config, fileDiagnostics) = store.load() else {
             throw CocoaError(.fileReadNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "Config file does not exist at \(store.url.path)."])
         }
+        let diagnostics = fileDiagnostics + (config.activeProfile.map { profile in
+            ModifierKeyCheck.diagnostics(in: profile) { ModifierRemapper.hidUsage(for: $0) != nil }
+        } ?? [])
         let conflicts = ConfigEdits.conflicts(in: config, shortcuts: SystemShortcuts.enabled())
         let lines = diagnosticLines(diagnostics, at: store.url) + conflictLines(conflicts)
         return CLIResponse(lines: lines + ["\(diagnostics.count) diagnostic(s), \(conflicts.count) conflict(s)."],
@@ -187,16 +192,25 @@ enum CLI {
         return config.profiles.map { "\($0.id == config.activeProfile?.id ? "*" : " ") \($0.name)" }
     }
 
+    /// Warning lines beyond this are summarized, so the reply stays within the IPC payload limit.
+    static let maximumImportWarnings = 200
+
     static func importLines(_ report: ImportReport) -> [String] {
-        ["Imported \(report.importedCount) mapping(s), skipped \(report.skippedCount)."]
+        let warnings = report.warnings.prefix(maximumImportWarnings).map { "warning: \($0)" }
+        let hidden = report.warnings.count - warnings.count
+        return ["Imported \(report.importedCount) mapping(s), skipped \(report.skippedCount)."]
             + report.skippedByReason.keys.sorted().map { "  \($0): \(report.skippedByReason[$0, default: 0])" }
-            + report.warnings.map { "warning: \($0)" }
+            + (report.shellCommands.isEmpty ? [] : [
+                "\(report.shellCommands.count) imported mapping(s) run shell commands; review them (see the warnings).",
+            ])
+            + warnings
+            + (hidden > 0 ? ["…and \(hidden) more warning(s)."] : [])
     }
 
     static func statusLines(
         appRunning: Bool, engineRunning: Bool, enabled: Bool?, hasConfig: Bool,
-        profile: String?, permissions: PermissionState, karabinerRunning: Bool,
-        diagnostics: Int, conflicts: Int, startError: String?
+        profile: String?, permissions: PermissionState, karabinerRunning: Bool, secureInput: Bool,
+        diagnostics: Int, conflicts: Int, startError: String?, usingPreviousConfig: Bool = false
     ) -> [String] {
         var lines = [
             "App: \(appRunning ? "running" : "stopped")",
@@ -206,11 +220,13 @@ enum CLI {
             "Accessibility: \(permissions.accessibility ? "granted" : "required")",
             "Input Monitoring: \(permissions.inputMonitoring ? "granted" : "required")",
             "Karabiner-Elements: \(karabinerRunning ? "also running (warning)" : "stopped")",
+            "Secure Input: \(secureInput ? "active (macOS pauses most remapping)" : "inactive")",
             "Diagnostics: \(diagnostics)",
             "Conflicts: \(conflicts)",
         ]
         if let enabled { lines.insert("Remapping: \(enabled ? "enabled" : "disabled")", at: 2) }
         if let startError { lines.append("Engine start error: \(startError)") }
+        if usingPreviousConfig { lines.append("Config file could not be parsed; the previous configuration is still active.") }
         return lines
     }
 

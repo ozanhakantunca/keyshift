@@ -241,9 +241,12 @@ def restore_file(path, original, mode):
 def run(output):
     original = CONFIG.read_bytes()
     mode = CONFIG.stat().st_mode & 0o777
-    backup = CONFIG.with_suffix(".yaml.bak")
-    old_backup = backup.read_bytes() if backup.exists() else None
-    backup_mode = backup.stat().st_mode & 0o777 if backup.exists() else mode
+    # Keyshift rotates config.yaml.bak, .bak.1 … and keeps an unparseable file as .invalid.bak.
+    backup_names = [".yaml.bak", *(f".yaml.bak.{n}" for n in range(1, 5)), ".yaml.invalid.bak"]
+    backups = {}
+    for name in backup_names:
+        path = CONFIG.with_suffix(name)
+        backups[path] = (path.read_bytes(), path.stat().st_mode & 0o777) if path.exists() else (None, mode)
     sha256 = hashlib.sha256(original).hexdigest()
     (ROOT / "config.original.yaml").write_bytes(original)
     (ROOT / "config.original.sha256").write_text(f"{sha256}  {CONFIG}\n", encoding="utf-8")
@@ -348,7 +351,8 @@ def run(output):
         data["blocker"] = f"Run interrupted. {detail.strip()}"
     finally:
         restore_file(CONFIG, original, mode)
-        restore_file(backup, old_backup, backup_mode)
+        for path, (contents, path_mode) in backups.items():
+            restore_file(path, contents, path_mode)
         for args in (("reload",), ("profile", "Windows"), ("enable",)):
             try:
                 if args[0] == "profile" and "Profile: Windows" in command(KEYSHIFT, "status").stdout:

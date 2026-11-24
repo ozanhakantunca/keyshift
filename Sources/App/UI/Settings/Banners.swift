@@ -82,6 +82,17 @@ struct GlobalBanners: View {
                 Banner(style: .error, title: String(localized: "Remapping could not start")) {
                     Text(error)
                 } actions: { EmptyView() }
+            } else if model.secureInputActive, model.engineRunning {
+                Banner(style: .info, title: String(localized: "Secure input is on")) {
+                    Text("macOS pauses remapping while a password field or secure keyboard entry is active. It resumes by itself afterwards.")
+                } actions: { EmptyView() }
+            }
+            if let error = model.operationError {
+                Banner(style: .error, title: String(localized: "The change was not saved")) {
+                    Text(error)
+                } actions: {
+                    Button(String(localized: "Dismiss")) { model.dismissOperationError() }
+                }
             }
             if !model.diagnostics.isEmpty {
                 diagnosticsBanner
@@ -97,7 +108,8 @@ struct GlobalBanners: View {
 
     private var needsBanners: Bool {
         !model.permissions.allGranted || model.karabinerRunning || !model.isEnabled
-            || model.lastStartError != nil || !model.diagnostics.isEmpty
+            || model.lastStartError != nil || !model.diagnostics.isEmpty || model.operationError != nil
+            || (model.secureInputActive && model.engineRunning)
     }
 
     private var diagnosticsBanner: some View {
@@ -107,7 +119,19 @@ struct GlobalBanners: View {
             : String(localized: "\(model.diagnostics.count) warnings in the config file")
         return Banner(style: errors > 0 ? .error : .warning, title: title) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("The rest of the file loaded normally; the lines below were skipped.")
+                if errors > 0 {
+                    Text("The config file has errors. Fix the file before editing here.")
+                        .foregroundStyle(.primary)
+                    if model.usingPreviousConfig {
+                        Text("The file could not be read, so Keyshift keeps using the previous configuration.")
+                    } else if model.hasConfigFile && model.config.profiles.isEmpty {
+                        Text("Nothing could be loaded from the file, so no keys are remapped.")
+                    } else {
+                        Text("The rest of the file loaded normally; the lines below were skipped.")
+                    }
+                } else {
+                    Text("The file loaded. Some entries below are ignored or have no effect.")
+                }
                 DisclosureGroup(isExpanded: $showDiagnostics) {
                     VStack(alignment: .leading, spacing: 3) {
                         ForEach(Array(model.diagnostics.enumerated()), id: \.offset) { _, diagnostic in

@@ -71,7 +71,8 @@ class RFB:
         from cryptography.hazmat.primitives.ciphers import Cipher, modes
 
         challenge = self.receive(16)
-        password_file = Path.home() / "tools/.vnc-legacy-pw"
+        password_file = Path(os.environ.get("KEYSHIFT_VNC_LEGACY_PASSWORD_FILE")
+                             or Path.home() / "tools/.vnc-legacy-pw")
         password = password_file.read_bytes().rstrip(b"\r\n")[:8].ljust(8, b"\0")
         key = bytes(int(f"{byte:08b}"[::-1], 2) for byte in password)
         encryptor = Cipher(TripleDES(key * 3), modes.ECB()).encryptor()

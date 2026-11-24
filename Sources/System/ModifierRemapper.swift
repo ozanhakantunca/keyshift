@@ -2,11 +2,85 @@ import Foundation
 import IOKit.hidsystem
 import KeyshiftCore
 
+/// Remembers which HID remaps Keyshift installed. UserKeyMapping outlives the process, so after a
+/// crash or kill the next process must not mistake those leftovers for the user's own mappings.
+public protocol HIDRemapLedger: AnyObject {
+    /// Remaps recorded by earlier processes, minus any this process has installed itself.
+    func leftovers() -> [ModifierRemapper.Remap]
+    /// Replaces what this owner currently has installed.
+    func record(_ remaps: [ModifierRemapper.Remap])
+    /// This owner has nothing installed.
+    func clear()
+    /// Every connected keyboard was cleaned of earlier leftovers.
+    func forgetLeftovers()
+}
+
+/// Ledger entries live in one defaults dictionary, keyed by process session and owner.
+public final class UserDefaultsRemapLedger: HIDRemapLedger {
+    public static let key = "appliedHIDRemaps"
+    private static let processSession = UUID().uuidString
+
+    private let defaults: UserDefaults
+    private let session: String
+    private let entry: String
+
+    public init(owner: String, defaults: UserDefaults = .standard, session: String? = nil) {
+        self.defaults = defaults
+        self.session = session ?? Self.processSession
+        entry = self.session + "/" + owner
+    }
+
+    private var entries: [String: [[NSNumber]]] {
+        get { defaults.dictionary(forKey: Self.key) as? [String: [[NSNumber]]] ?? [:] }
+        set { newValue.isEmpty ? defaults.removeObject(forKey: Self.key) : defaults.set(newValue, forKey: Self.key) }
+    }
+
+    private func isCurrent(_ key: String) -> Bool { key.hasPrefix(session + "/") }
+
+    public func leftovers() -> [ModifierRemapper.Remap] {
+        var earlier: [ModifierRemapper.Remap] = []
+        var current: Set<ModifierRemapper.Remap> = []
+        for (key, pairs) in entries.sorted(by: { $0.key < $1.key }) {
+            let remaps = pairs.compactMap { pair in
+                pair.count == 2 ? ModifierRemapper.Remap(source: pair[0].uint64Value, destination: pair[1].uint64Value) : nil
+            }
+            if isCurrent(key) { current.formUnion(remaps) } else { earlier += remaps }
+        }
+        var seen: Set<ModifierRemapper.Remap> = []
+        return earlier.filter { !current.contains($0) && seen.insert($0).inserted }
+    }
+
+    public func record(_ remaps: [ModifierRemapper.Remap]) {
+        let pairs = remaps.map { [NSNumber(value: $0.source), NSNumber(value: $0.destination)] }
+        var entries = entries
+        guard entries[entry] != pairs else { return }
+        entries[entry] = pairs
+        self.entries = entries
+    }
+
+    public func clear() {
+        var entries = entries
+        guard entries.removeValue(forKey: entry) != nil else { return }
+        self.entries = entries
+    }
+
+    public func forgetLeftovers() {
+        let entries = entries
+        let kept = entries.filter { isCurrent($0.key) }
+        if kept.count != entries.count { self.entries = kept }
+    }
+}
+
 /// Installs the same per-keyboard UserKeyMapping property as hidutil.
 public final class ModifierRemapper {
-    public struct Remap: Equatable {
+    public struct Remap: Hashable {
         public let source: UInt64
         public let destination: UInt64
+
+        public init(source: UInt64, destination: UInt64) {
+            self.source = source
+            self.destination = destination
+        }
 
         private static let sourceKey = "HIDKeyboardModifierMappingSrc"
         private static let destinationKey = "HIDKeyboardModifierMappingDst"
@@ -17,6 +91,12 @@ public final class ModifierRemapper {
 
         fileprivate static func source(in property: [String: Any]) -> UInt64? {
             (property[sourceKey] as? NSNumber)?.uint64Value
+        }
+
+        init?(property: [String: Any]) {
+            guard let source = Self.source(in: property),
+                  let destination = (property[Self.destinationKey] as? NSNumber)?.uint64Value else { return nil }
+            self.init(source: source, destination: destination)
         }
     }
 
@@ -32,10 +112,25 @@ public final class ModifierRemapper {
     }
 
     private static let property = "UserKeyMapping" as CFString
+    private let ledger: HIDRemapLedger
     private var client: IOHIDEventSystemClient?
     private var keyboards: [UInt64: Keyboard] = [:]
 
-    public init() {}
+    /// Each concurrently used remapper needs its own ledger owner.
+    public init(ledger: HIDRemapLedger = UserDefaultsRemapLedger(owner: "app")) {
+        self.ledger = ledger
+    }
+
+    /// A keyboard's map without entries that exactly match a remap an earlier process left behind.
+    public static func removingLeftovers(_ mappings: [[String: Any]], _ leftovers: Set<Remap>) -> [[String: Any]] {
+        guard !leftovers.isEmpty else { return mappings }
+        return mappings.filter { Remap(property: $0).map { !leftovers.contains($0) } ?? true }
+    }
+
+    private var installed: [Remap] {
+        var seen: Set<Remap> = []
+        return keyboards.keys.sorted().flatMap { keyboards[$0]?.applied ?? [] }.filter { seen.insert($0).inserted }
+    }
 
     /// Selects HID mappings from the active profile, in rule order, and removes them from
     /// the configuration delivered to Quartz. A physical source has a single HID destination.
@@ -105,6 +200,11 @@ public final class ModifierRemapper {
         guard !remaps.isEmpty else { return restore() }
         if client == nil { client = IOHIDEventSystemClientCreateSimpleClient(nil) }
         guard let connected = connectedKeyboards() else { return false }
+        // Read before recording, which would hide this owner's pairs.
+        let leftovers = Set(ledger.leftovers())
+        var pending = installed
+        pending += remaps.filter { !pending.contains($0) }
+        ledger.record(pending)
         var succeeded = true
         let sources = Set(remaps.map(\.source))
         for (registryID, service) in connected {
@@ -115,7 +215,8 @@ public final class ModifierRemapper {
                     succeeded = false
                     continue
                 }
-                keyboards[registryID] = Keyboard(service: service, previous: value as? [[String: Any]] ?? [])
+                keyboards[registryID] = Keyboard(
+                    service: service, previous: Self.removingLeftovers(value as? [[String: Any]] ?? [], leftovers))
             }
             guard let keyboard = keyboards[registryID] else { continue }
             let unrelated = keyboard.previous.filter { property in
@@ -129,10 +230,13 @@ public final class ModifierRemapper {
             }
         }
         keyboards = keyboards.filter { connected[$0.key] != nil }
+        ledger.record(installed)
+        if succeeded { ledger.forgetLeftovers() }
         return succeeded
     }
 
     /// Restores each keyboard's original map. Keeps failed restores available for a retry.
+    /// With nothing installed, removes leftovers of an earlier process from connected keyboards.
     @discardableResult
     public func restore() -> Bool {
         for (id, keyboard) in keyboards {
@@ -143,8 +247,36 @@ public final class ModifierRemapper {
         if !keyboards.isEmpty, let connected = connectedKeyboards() {
             keyboards = keyboards.filter { connected[$0.key] != nil }
         }
-        if keyboards.isEmpty { client = nil }
-        return keyboards.isEmpty
+        guard keyboards.isEmpty else {
+            ledger.record(installed)
+            return false
+        }
+        ledger.clear()
+        let cleaned = removeLeftovers()
+        client = nil
+        return cleaned
+    }
+
+    private func removeLeftovers() -> Bool {
+        let leftovers = Set(ledger.leftovers())
+        guard !leftovers.isEmpty else { return true }
+        if client == nil { client = IOHIDEventSystemClientCreateSimpleClient(nil) }
+        guard let connected = connectedKeyboards() else { return false }
+        var succeeded = true
+        for service in connected.values {
+            guard let value = IOHIDServiceClientCopyProperty(service, Self.property) else { continue }
+            guard let current = value as? [[String: Any]] else {
+                succeeded = false
+                continue
+            }
+            let cleaned = Self.removingLeftovers(current, leftovers)
+            if cleaned.count != current.count,
+               !IOHIDServiceClientSetProperty(service, Self.property, cleaned as CFArray) {
+                succeeded = false
+            }
+        }
+        if succeeded { ledger.forgetLeftovers() }
+        return succeeded
     }
 
     private func connectedKeyboards() -> [UInt64: IOHIDServiceClient]? {

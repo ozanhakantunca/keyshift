@@ -67,7 +67,7 @@ public final class EventTapBackend {
             self.paused = paused
             session?.perform { session in
                 session.paused = paused
-                if paused { session.engine.reset() }
+                if paused { session.releaseHeld() }
             }
         }
     }
@@ -79,7 +79,7 @@ public final class EventTapBackend {
             self.config = config
             appliesLayout = applyingLayout
             let effective = effectiveConfig(config)
-            session?.perform { $0.engine.load(config: effective) }
+            session?.perform { $0.load(effective) }
         }
     }
 
@@ -90,7 +90,7 @@ public final class EventTapBackend {
             self.layout = layout
             guard let config else { return }
             let effective = effectiveConfig(config)
-            session?.perform { $0.engine.load(config: effective) }
+            session?.perform { $0.load(effective) }
         }
     }
 
@@ -146,6 +146,9 @@ public final class EventTapBackend {
         private var startup: Result<CFRunLoop, StartError>!
 
         private var tap: CFMachPort?
+        /// Listen-only, so scrolling is never delayed; enabled only while tap-alone mappings exist.
+        private var scrollTap: CFMachPort?
+        private var scrollSource: CFRunLoopSource?
         private var eventSource: CGEventSource?
         private struct Probe {
             let capture: SuiteEventProbe
@@ -219,7 +222,8 @@ public final class EventTapBackend {
 
             let loop = CFRunLoopGetCurrent()!
             CFRunLoopAddSource(loop, source, .defaultMode)
-            if let initialConfig { engine.load(config: initialConfig) }
+            installScrollTap(loop)
+            if let initialConfig { load(initialConfig) }
             if paused { engine.reset() }
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             startup = .success(loop)
@@ -232,9 +236,52 @@ public final class EventTapBackend {
                 CGEvent.tapEnable(tap: tap, enable: false)
                 CFMachPortInvalidate(tap)
             }
+            if let scrollTap { CFMachPortInvalidate(scrollTap) }
+            if let scrollSource { CFRunLoopSourceInvalidate(scrollSource) }
             CFRunLoopRemoveSource(loop, source, .defaultMode)
             CFRunLoopSourceInvalidate(source)
+            releaseHeld()
+        }
+
+        func load(_ config: Config) {
+            engine.load(config: config)
+            if let scrollTap { CGEvent.tapEnable(tap: scrollTap, enable: engine.hasTapAloneMappings) }
+        }
+
+        /// Posts the releases of held remapped outputs; used where the engine stops seeing input.
+        func releaseHeld() {
+            let releases = engine.resetReleasingHeld()
             engine.reset()
+            emit(releases, proxy: nil, fallbackLocation: .zero, marker: nil)
+        }
+
+        /// Optional: without it, scrolling simply does not cancel a pending tap-alone.
+        private func installScrollTap(_ loop: CFRunLoop) {
+            guard let tap = CGEvent.tapCreate(
+                tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
+                eventsOfInterest: CGEventMask(1) << CGEventType.scrollWheel.rawValue,
+                callback: { _, type, event, data in
+                    if let data { Unmanaged<Session>.fromOpaque(data).takeUnretainedValue().scrolled(type) }
+                    return Unmanaged.passUnretained(event)
+                },
+                userInfo: Unmanaged.passUnretained(self).toOpaque()
+            ) else { return }
+            CGEvent.tapEnable(tap: tap, enable: false)
+            guard let source = CFMachPortCreateRunLoopSource(nil, tap, 0) else {
+                CFMachPortInvalidate(tap)
+                return
+            }
+            CFRunLoopAddSource(loop, source, .defaultMode)
+            scrollTap = tap
+            scrollSource = source
+        }
+
+        private func scrolled(_ type: CGEventType) {
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                if let scrollTap, engine.hasTapAloneMappings { CGEvent.tapEnable(tap: scrollTap, enable: true) }
+                return
+            }
+            engine.cancelPendingTap()
         }
 
         private func installTap() throws(StartError) -> CFRunLoopSource {
@@ -279,10 +326,11 @@ public final class EventTapBackend {
 
         private func handle(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                engine.reset()
                 probe?.engine.reset()
                 probe?.capture.noteTapDisabled()
                 if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+                // The tap keeps running, so held physical keys stay recorded and their releases are swallowed.
+                emit(engine.resetReleasingHeld(), proxy: proxy, fallbackLocation: .zero, marker: nil)
                 return Unmanaged.passUnretained(event)
             }
             let tag = event.getIntegerValueField(.eventSourceUserData)
@@ -316,7 +364,8 @@ public final class EventTapBackend {
             return result
         }
 
-        private func emit(_ outputs: [OutputEvent], proxy: CGEventTapProxy, fallbackLocation: CGPoint,
+        /// Without a proxy (outside the callback) events are posted at the session tap location.
+        private func emit(_ outputs: [OutputEvent], proxy: CGEventTapProxy?, fallbackLocation: CGPoint,
                           marker: Int64?) {
             guard let eventSource else { return }
             var cursor: CGPoint?
@@ -332,7 +381,7 @@ public final class EventTapBackend {
                 if let event = EventCodec.makeEvent(output, source: eventSource, location: cursor ?? .zero) {
                     if let marker { event.setIntegerValueField(.eventSourceUserData, value: marker) }
                     // Posting through the proxy starts downstream of this tap.
-                    event.tapPostEvent(proxy)
+                    if let proxy { event.tapPostEvent(proxy) } else { event.post(tap: .cgSessionEventTap) }
                 }
             }
         }

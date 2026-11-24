@@ -25,7 +25,7 @@ with `run.sh --resume --vnc-legacy vnc`. The user is
 `KEYSHIFT_VNC_USER` (default: `$USER`). The password comes from `KEYSHIFT_VNC_PASSWORD`
 or a file named by `KEYSHIFT_VNC_PASSWORD_FILE`; it is read at run time and never printed,
 logged or written. Screen Sharing must be enabled for that user. It
-uses `cryptography` from `~/tools/novnc-venv/bin/python`. Pointer events sent over
+uses `cryptography` from the Python interpreter below. Pointer events sent over
 this session produce no cursor movement or mouse events on this Mac; no case needs them. It records keysym traffic
 and annotated delivery without recording authentication data or remote clipboard
 contents.
@@ -74,3 +74,12 @@ switch straight back when another app is in front of an empty Space.
 Key names in the harness follow the character on the keycap, as Keyshift does
 (`adapt_layout`). F1 and F2 are posted without the fn flag, because the HID system
 turns fn+F1/F2 into the brightness keys.
+
+## Environment variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `KEYSHIFT_E2E_PYTHON` | `$HOME/tools/novnc-venv/bin/python` (falls back to `python3` if not executable) | Interpreter for `run.py`; needs the `cryptography` package. |
+| `KEYSHIFT_VNC_USER` | `$USER` | Screen Sharing user. |
+| `KEYSHIFT_VNC_PASSWORD` / `KEYSHIFT_VNC_PASSWORD_FILE` | none | Screen Sharing password, or a file holding it. |
+| `KEYSHIFT_VNC_LEGACY_PASSWORD_FILE` | `$HOME/tools/.vnc-legacy-pw` | Password file for the legacy view-only VNC authentication (`--vnc-legacy`). |

@@ -33,6 +33,16 @@ final class PresetsTests: XCTestCase {
         }
     }
 
+    func testNoBundledPresetHasModifierMappingsThatCannotFire() throws {
+        for info in Presets.all() {
+            let (config, _) = try XCTUnwrap(Presets.decode(info.id), info.id)
+            for profile in config.profiles {
+                let diagnostics = ModifierKeyCheck.diagnostics(in: profile)
+                XCTAssertTrue(diagnostics.isEmpty, "\(info.id): \(diagnostics.map(\.message))")
+            }
+        }
+    }
+
     /// ⌘J is "Jump to Selection" in Chrome-family browsers on macOS; Downloads is ⇧⌘J (Firefox: ⇧⌘Y).
     func testCtrlJOpensDownloadsWithEachBrowsersOwnShortcut() throws {
         let (config, _) = try XCTUnwrap(Presets.decode("windows"))

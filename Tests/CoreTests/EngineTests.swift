@@ -503,11 +503,79 @@ final class EngineTests: XCTestCase {
     }
 
     func testImplicitFnKeySet() {
-        for n in ["left", "right", "up", "down", "home", "end", "page_up", "page_down", "delete", "f1", "f12", "f19"] {
-            XCTAssertTrue(Engine.setsImplicitFn(k(n)), n)
+        for n in ["left", "right", "up", "down", "home", "end", "page_up", "page_down", "delete", "f1", "f12", "f19",
+                  "keypad_clear", "insert", "f20"] {
+            XCTAssertTrue(k(n).hasImplicitFn, n)
         }
-        for n in ["a", "return", "backspace", "space", "left_cmd", "escape"] {
-            XCTAssertFalse(Engine.setsImplicitFn(k(n)), n)
+        for n in ["a", "return", "backspace", "space", "left_cmd", "escape", "menu", "keypad_1"] {
+            XCTAssertFalse(k(n).hasImplicitFn, n)
         }
+        XCTAssertFalse(KeyCode(108).hasImplicitFn)
+        XCTAssertFalse(KeyCode(112).hasImplicitFn)
+    }
+
+    func testKeypadClearMatchesExactlyDespiteReportedFn() {
+        let e = engine(Rule(name: "r", passthrough: [], mappings: [map("keypad_clear", keys("escape"))]))
+        // Quartz reports keypad clear with the fn flag set.
+        XCTAssertEqual(down(e, "keypad_clear", extra: .function).disposition, rewriteDown("escape"))
+        XCTAssertEqual(up(e, "keypad_clear", mods: .function).disposition, rewriteUp("escape"))
+    }
+
+    // MARK: Reset
+
+    func testResetReleasingHeldReleasesOutputsAndSwallowsPhysicalRelease() {
+        let e = engine(Rule(name: "r", mappings: [map("ctrl+h", keys("backspace")),
+                                                   map("right_click", .mouse(.left, [])),
+                                                   map("f13", .openURL("https://x"))]))
+        XCTAssertEqual(down(e, "ctrl+h").disposition, rewriteDown("backspace"))
+        XCTAssertEqual(mouse(e, .right, down: true, []).emit, [.mouseDown(.left, [])])
+        XCTAssertEqual(down(e, "f13").actions, [.openURL("https://x")])
+
+        XCTAssertEqual(Set(e.resetReleasingHeld()), [.keyUp(k("backspace"), []), .mouseUp(.left, [])])
+        XCTAssertEqual(e.resetReleasingHeld(), [])
+
+        // The physical releases no longer produce unmatched events downstream.
+        XCTAssertEqual(down(e, "ctrl+h", repeat: true).disposition, .replace)
+        let keyUp = up(e, "ctrl+h")
+        XCTAssertEqual(keyUp.disposition, .replace)
+        XCTAssertEqual(keyUp.emit, [])
+        let mouseUp = mouse(e, .right, down: false, [])
+        XCTAssertEqual(mouseUp.disposition, .replace)
+        XCTAssertEqual(mouseUp.emit, [])
+        XCTAssertEqual(up(e, "f13").disposition, .replace)
+
+        // Everything is consumed; a fresh press maps again.
+        XCTAssertEqual(up(e, "ctrl+h"), .pass)
+        XCTAssertEqual(down(e, "ctrl+h").disposition, rewriteDown("backspace"))
+        XCTAssertEqual(up(e, "ctrl+h").disposition, rewriteUp("backspace"))
+    }
+
+    func testResetAfterReleasingHeldPassesPhysicalRelease() {
+        let e = engine(Rule(name: "r", mappings: [map("ctrl+h", keys("shift+backspace"))]))
+        _ = down(e, "ctrl+h")
+        XCTAssertEqual(e.resetReleasingHeld(), [.keyUp(k("backspace"), .shift)])
+        e.reset()
+        XCTAssertEqual(up(e, "ctrl+h"), .pass)
+    }
+
+    func testFreshPressReplacesSwallowedRecord() {
+        let e = engine(Rule(name: "r", mappings: [map("ctrl+h", keys("backspace"))]))
+        _ = down(e, "ctrl+h")
+        _ = e.resetReleasingHeld()
+        // The release was lost while the tap was disabled; an unmapped re-press must still pass both ways.
+        XCTAssertEqual(down(e, "h"), .pass)
+        XCTAssertEqual(up(e, "h"), .pass)
+    }
+
+    func testCancelPendingTapAlone() {
+        let (e, _) = tapEngine()
+        XCTAssertTrue(e.hasTapAloneMappings)
+        XCTAssertFalse(engine(Rule(name: "r", mappings: [map("ctrl+c", keys("cmd+c"))])).hasTapAloneMappings)
+        _ = flags(e, "left_cmd", true, mods: .command, t: 0)
+        e.cancelPendingTap()
+        XCTAssertEqual(flags(e, "left_cmd", false, mods: [], t: 0.1), .pass)
+        // The next tap fires again.
+        _ = flags(e, "left_cmd", true, mods: .command, t: 1)
+        XCTAssertEqual(flags(e, "left_cmd", false, mods: [], t: 1.1).actions, [.system(.launchpad)])
     }
 }

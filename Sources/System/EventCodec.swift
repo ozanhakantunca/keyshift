@@ -79,18 +79,10 @@ enum EventCodec {
                 result.formUnion([side.flag, heldSides])
             }
         }
-        if modifiers.contains(.function) || key.map(hasIntrinsicFnFlag) == true {
+        if modifiers.contains(.function) || key?.hasImplicitFn == true {
             result.insert(.maskSecondaryFn)
         }
         return result
-    }
-
-    // Quartz marks function and navigation keys with SecondaryFn even on full-size keyboards.
-    static func hasIntrinsicFnFlag(_ key: KeyCode) -> Bool {
-        switch key.rawValue {
-        case 64, 71, 79, 80, 90, 96...107, 109, 111, 113...126: return true
-        default: return false
-        }
     }
 
     static func decode(_ event: CGEvent, type: CGEventType) -> InputEvent? {

@@ -9,6 +9,9 @@ public struct ImportReport: Sendable {
     /// manipulator once per accessibility role) and were folded into it. Included in `importedCount`.
     public fileprivate(set) var mergedDuplicateCount = 0
     public fileprivate(set) var warnings: [String] = []
+    /// Every imported mapping that runs a shell command, as "Profile 'X', rule 'Y': command"
+    /// (long commands truncated). Also listed in `warnings`; review these before using the rules.
+    public fileprivate(set) var shellCommands: [String] = []
 
     fileprivate mutating func skip(_ reason: String, at location: String, count: Int = 1) {
         skippedCount += count
@@ -18,7 +21,14 @@ public struct ImportReport: Sendable {
 }
 
 public enum KarabinerImporter {
+    /// Larger files are refused before reading.
+    public static let maximumFileSize = 8 * 1024 * 1024
+
     public static func importFile(at url: URL) throws -> (Config, ImportReport) {
+        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard size <= maximumFileSize else {
+            throw ImportError("\(url.path) is larger than \(maximumFileSize / 1024 / 1024) MB")
+        }
         let data = try Data(contentsOf: url)
         let root = try JSONSerialization.jsonObject(with: data)
         guard let root = root as? Object, let profiles = root["profiles"] as? [Any] else {
@@ -49,6 +59,17 @@ public enum KarabinerImporter {
             if object["selected"] as? Bool == true, config.selectedProfile == nil {
                 config.selectedProfile = name
             }
+        }
+        for profile in config.profiles {
+            for rule in profile.rules {
+                for case .shell(let command) in rule.mappings.map(\.action) {
+                    let text = command.count > 200 ? String(command.prefix(200)) + "…" : command
+                    report.shellCommands.append("Profile '\(profile.name)', rule '\(rule.name)': \(text)")
+                    report.warnings.append("Profile '\(profile.name)', rule '\(rule.name)' runs the shell command "
+                        + "`\(text)`. Review it before using this rule.")
+                }
+            }
+            report.warnings += ModifierKeyCheck.diagnostics(in: profile).map { "Profile '\(profile.name)'. \($0.message)" }
         }
         return (config, report)
     }

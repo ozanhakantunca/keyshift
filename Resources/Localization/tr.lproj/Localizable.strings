@@ -343,3 +343,22 @@
 "Turn all remapping on or off" = "Tüm tuş eşlemeyi aç veya kapat";
 "Not running" = "Çalışmıyor";
 "Keyshift Settings" = "Keyshift Ayarları";
+
+/* Config file protection, secure input, import review */
+"The config file has errors. Fix the file before editing here." = "Yapılandırma dosyasında hatalar var. Burada düzenlemeden önce dosyayı düzelt.";
+"The config changed on disk. Reopen and try again." = "Yapılandırma diskte değişti. Yeniden açıp tekrar dene.";
+"The change was not saved" = "Değişiklik kaydedilmedi";
+"Dismiss" = "Kapat";
+"The file could not be read, so Keyshift keeps using the previous configuration." = "Dosya okunamadı; Keyshift önceki yapılandırmayı kullanmaya devam ediyor.";
+"Nothing could be loaded from the file, so no keys are remapped." = "Dosyadan hiçbir şey yüklenemedi; hiçbir tuş eşlenmiyor.";
+"The file loaded. Some entries below are ignored or have no effect." = "Dosya yüklendi. Aşağıdaki bazı girdiler yok sayılıyor veya etkisiz.";
+"Secure input is on" = "Güvenli giriş açık";
+"macOS pauses remapping while a password field or secure keyboard entry is active. It resumes by itself afterwards." = "Bir parola alanı veya güvenli klavye girişi etkinken macOS tuş eşlemeyi duraklatır. Ardından kendiliğinden devam eder.";
+"Paused by macOS (secure input)" = "macOS tarafından duraklatıldı (güvenli giriş)";
+"1 imported shortcut runs a shell command" = "İçe aktarılan 1 kısayol bir kabuk komutu çalıştırıyor";
+"%lld imported shortcuts run shell commands" = "İçe aktarılan %lld kısayol kabuk komutu çalıştırıyor";
+"They are active now. Check that you trust each command, or delete the shortcut in Rules." = "Bunlar şu anda etkin. Her komuta güvendiğinden emin ol ya da kısayolu Kurallar'dan sil.";
+"%lld imported shortcuts run shell commands. Review them in Settings → Rules." = "İçe aktarılan %lld kısayol kabuk komutu çalıştırıyor. Bunları Ayarlar → Kurallar'da gözden geçir.";
+"Your config file has errors" = "Yapılandırma dosyanda hatalar var";
+"Keyshift leaves it unchanged unless you choose to replace it. The current file is then kept as config.yaml.invalid.bak." = "Değiştirmeyi seçmedikçe Keyshift dosyaya dokunmaz. Seçersen mevcut dosya config.yaml.invalid.bak olarak saklanır.";
+"Replace my config file with this starting point" = "Yapılandırma dosyamı bu başlangıç noktasıyla değiştir";

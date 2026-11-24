@@ -339,7 +339,8 @@ struct MappingEditorSheet: View {
 
     private var currentRule: Rule? {
         guard let profile = model.activeProfile,
-              let index = profile.ruleIndex(id: target.ruleID, fallback: target.ruleIndex) else { return nil }
+              let index = (try? profile.ruleIndex(id: target.ruleID, fallback: target.ruleIndex, snapshot: target.rule)) ?? nil
+        else { return nil }
         return profile.rules[index]
     }
 
@@ -353,10 +354,11 @@ struct MappingEditorSheet: View {
         guard let mapping = builtMapping else { return [] }
         var config = model.config
         var found = false
-        config.editActiveProfile { profile in
-            guard let r = profile.ruleIndex(id: target.ruleID, fallback: target.ruleIndex) else { return }
+        try? config.editActiveProfile { profile in
+            guard let r = try profile.ruleIndex(id: target.ruleID, fallback: target.ruleIndex, snapshot: target.rule)
+            else { return }
             profile.rules[r].enabled = true
-            Self.apply(mapping, to: &profile.rules[r], fallback: target.mappingIndex)
+            try Self.apply(mapping, to: &profile.rules[r], fallback: target.mappingIndex, snapshot: target.mapping)
             found = true
         }
         guard found, let profile = config.activeProfile else { return [] }
@@ -375,8 +377,9 @@ struct MappingEditorSheet: View {
         }
     }
 
-    private static func apply(_ mapping: Mapping, to rule: inout Rule, fallback: Int?) {
-        if let m = rule.mappingIndex(id: mapping.id, fallback: fallback) {
+    /// Replaces the mapping `snapshot` (nil: none, a new mapping is appended).
+    private static func apply(_ mapping: Mapping, to rule: inout Rule, fallback: Int?, snapshot: Mapping?) throws {
+        if let m = try rule.mappingIndex(id: mapping.id, fallback: fallback, snapshot: snapshot) {
             rule.mappings[m] = mapping
         } else {
             rule.mappings.append(mapping)
@@ -387,12 +390,13 @@ struct MappingEditorSheet: View {
         guard let mapping = builtMapping else { return }
         let isNew = self.isNew
         model.update { config in
-            config.editActiveProfile { profile in
-                guard let r = profile.ruleIndex(id: target.ruleID, fallback: target.ruleIndex) else { return }
+            try config.editActiveProfile { profile in
+                guard let r = try profile.ruleIndex(id: target.ruleID, fallback: target.ruleIndex, snapshot: target.rule)
+                else { return }
                 if isNew {
                     profile.rules[r].mappings.append(mapping)
                 } else {
-                    Self.apply(mapping, to: &profile.rules[r], fallback: target.mappingIndex)
+                    try Self.apply(mapping, to: &profile.rules[r], fallback: target.mappingIndex, snapshot: target.mapping)
                 }
             }
         }
@@ -401,9 +405,10 @@ struct MappingEditorSheet: View {
     private func delete() {
         guard let original = target.mapping else { return }
         model.update { config in
-            config.editActiveProfile { profile in
-                guard let r = profile.ruleIndex(id: target.ruleID, fallback: target.ruleIndex),
-                      let m = profile.rules[r].mappingIndex(id: original.id, fallback: target.mappingIndex) else { return }
+            try config.editActiveProfile { profile in
+                guard let r = try profile.ruleIndex(id: target.ruleID, fallback: target.ruleIndex, snapshot: target.rule),
+                      let m = try profile.rules[r].mappingIndex(id: original.id, fallback: target.mappingIndex,
+                                                                snapshot: original) else { return }
                 profile.rules[r].mappings.remove(at: m)
             }
         }

@@ -54,6 +54,16 @@ public final class Engine: RemapEngine {
         let output: HeldOutput
         let rule: UUID
         let mapping: UUID
+
+        var release: OutputEvent? {
+            switch output {
+            case .key(let k, let m): return .keyUp(k, m)
+            case .mouse(let b, let m): return .mouseUp(b, m)
+            case .swallow: return nil
+            }
+        }
+
+        var swallowed: Held { Held(output: .swallow, rule: rule, mapping: mapping) }
     }
 
     private struct PendingTap {
@@ -136,6 +146,20 @@ public final class Engine: RemapEngine {
         pendingTap = nil
     }
 
+    public func resetReleasingHeld() -> [OutputEvent] {
+        var releases: [OutputEvent] = []
+        for held in heldKeys.values { held.release.map { releases.append($0) } }
+        for held in heldButtons.values { held.release.map { releases.append($0) } }
+        heldKeys = heldKeys.mapValues(\.swallowed)
+        heldButtons = heldButtons.mapValues(\.swallowed)
+        pendingTap = nil
+        return releases
+    }
+
+    public var hasTapAloneMappings: Bool { !tapIndex.isEmpty }
+
+    public func cancelPendingTap() { pendingTap = nil }
+
     public func handle(_ event: InputEvent, context: EngineContext) -> Decision {
         switch event.kind {
         case .keyDown:
@@ -173,7 +197,7 @@ public final class Engine: RemapEngine {
 
         guard let entries = keyIndex[event.key] else { return .pass }
         var lazy = LazyContext(context)
-        let implicitFn = Self.setsImplicitFn(event.key)
+        let implicitFn = event.key.hasImplicitFn
         guard let (entry, extras) = match(entries, event.modifiers, implicitFn: implicitFn, &lazy) else { return .pass }
 
         let rule = rules[entry.rule]
@@ -391,14 +415,6 @@ public final class Engine: RemapEngine {
     @inline(__always)
     private static func effective(_ input: Modifiers, _ e: Entry, _ implicitFn: Bool) -> Modifiers {
         implicitFn && !e.modifiers.contains(.function) ? input.subtracting(.function) : input
-    }
-
-    /// Keys for which macOS sets the fn flag by itself (arrows, navigation cluster, F-keys).
-    static func setsImplicitFn(_ key: KeyCode) -> Bool {
-        switch key.rawValue {
-        case 64, 79, 80, 90, 96...126: return true
-        default: return false
-        }
     }
 
     private static func pairs(_ combos: [KeyCombo], _ extras: Modifiers) -> [OutputEvent] {

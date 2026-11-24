@@ -36,8 +36,10 @@ final class KarabinerImporterTests: XCTestCase {
         XCTAssertEqual(config.selectedProfile, "Selected")
         XCTAssertEqual(report.importedCount, 7)
         XCTAssertEqual(report.skippedCount, 0)
-        XCTAssertEqual(report.warnings.count, 1)
+        XCTAssertEqual(report.warnings.count, 2)
         XCTAssertTrue(report.warnings[0].contains("imported as the literal"))
+        XCTAssertEqual(report.shellCommands, ["Profile 'Selected', rule 'Conversions': open -a Finder && echo hello"])
+        XCTAssertTrue(report.warnings[1].contains("runs the shell command `open -a Finder && echo hello`"))
         let profile = try XCTUnwrap(config.activeProfile)
         XCTAssertEqual(profile.rules.map(\.name), ["Simple Modifications", "Conversions", "Conversions", "Conversions"])
         let simple = profile.rules[0]
@@ -221,6 +223,33 @@ final class KarabinerImporterTests: XCTestCase {
         let (roundTripped, diagnostics) = ConfigCodec.decode(ConfigCodec.encode(config))
         XCTAssertTrue(diagnostics.isEmpty, "Imported config produced YAML diagnostics.")
         XCTAssertTrue(withoutIDs(roundTripped) == withoutIDs(config), "Imported config changed on YAML round-trip.")
+    }
+
+    func testWarnsAboutLongShellCommandsAndModifierMappingsThatCannotFire() throws {
+        let long = String(repeating: "x", count: 300)
+        let json = #"""
+        {"profiles":[{"name":"P","complex_modifications":{"rules":[{"description":"R","manipulators":[
+          {"type":"basic","from":{"key_code":"f1"},"to":[{"shell_command":"\#(long)"}]},
+          {"type":"basic","from":{"key_code":"caps_lock"},
+           "to":[{"key_code":"left_shift","modifiers":["left_command","left_control","left_option"]}]},
+          {"type":"basic","from":{"key_code":"right_command"},"to":[{"key_code":"escape"}]}
+        ]}]}}]}
+        """#
+        let (_, report) = try importJSON(json)
+        XCTAssertEqual(report.shellCommands.count, 1)
+        XCTAssertEqual(report.shellCommands[0], "Profile 'P', rule 'R': " + String(repeating: "x", count: 200) + "…")
+        let modifier = report.warnings.filter { $0.contains(ModifierKeyCheck.explanation) }
+        XCTAssertEqual(modifier.count, 1)
+        XCTAssertTrue(modifier[0].contains("'caps_lock'"))
+    }
+
+    func testRefusesHugeFiles() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(count: KarabinerImporter.maximumFileSize + 1).write(to: url)
+        XCTAssertThrowsError(try KarabinerImporter.importFile(at: url)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("larger than"))
+        }
     }
 
     private func importJSON(_ json: String) throws -> (Config, ImportReport) {

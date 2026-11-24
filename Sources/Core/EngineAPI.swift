@@ -102,4 +102,22 @@ public protocol RemapEngine: AnyObject {
     func handle(_ event: InputEvent, context: EngineContext) -> Decision
     /// Called when the backend is disabled/paused so held state can be released.
     func reset()
+    /// Resets like `reset()` but returns the releases (key up / mouse up) for remapped outputs still
+    /// held, for the backend to post. Physical keys/buttons still down stay recorded so their own
+    /// release is swallowed; call `reset()` afterwards if the engine will not see those releases.
+    func resetReleasingHeld() -> [OutputEvent]
+    /// True when non-key input (scrolling) must be reported through `cancelPendingTap()`.
+    var hasTapAloneMappings: Bool { get }
+    /// Forgets a pending tap-alone, e.g. because the user scrolled while holding the modifier.
+    func cancelPendingTap()
+}
+
+public extension RemapEngine {
+    func resetReleasingHeld() -> [OutputEvent] {
+        reset()
+        return []
+    }
+
+    var hasTapAloneMappings: Bool { false }
+    func cancelPendingTap() {}
 }

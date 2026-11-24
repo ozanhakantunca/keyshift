@@ -25,7 +25,7 @@ enum HIDSelfTest {
                     map: {caps_lock: escape}
             """)
         let plan = ModifierRemapper.plan(for: config)
-        let remapper = ModifierRemapper()
+        let remapper = ModifierRemapper(ledger: UserDefaultsRemapLedger(owner: "hid-self-test"))
         var restored = false
         let installed: String? = {
             defer {

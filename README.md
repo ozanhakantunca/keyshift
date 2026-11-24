@@ -38,8 +38,13 @@ Intel.
 
 ### Download (DMG)
 
-1. Download `Keyshift-0.1.0.dmg` from [GitHub Releases](https://github.com/ozanhakantunca/keyshift/releases)
-   and drag **Keyshift** into **Applications**.
+1. Download `Keyshift-x.y.z.dmg` from [GitHub Releases](https://github.com/ozanhakantunca/keyshift/releases)
+   and drag **Keyshift** into **Applications**. To verify the download, also fetch
+   `Keyshift-x.y.z.dmg.sha256` into the same folder and run:
+
+   ```sh
+   shasum -a 256 -c Keyshift-*.dmg.sha256
+   ```
 2. The app is signed with a self-signed certificate and does not have Apple notarization, so the
    first launch is blocked. Open it once, then go to **System Settings → Privacy & Security** and
    click **Open Anyway**. On macOS 13 and 14, you can also right-click the app in Finder and choose
@@ -60,6 +65,11 @@ cd keyshift
 ./scripts/create-signing-cert.sh   # once, to keep permissions across rebuilds
 ./scripts/install.sh --with-cli    # build, install and link the keyshift command
 ```
+
+`create-signing-cert.sh` adds the certificate to your login keychain, which needs that keychain
+unlocked, so it asks for your login password (input hidden; it is used only for that run and never
+stored or printed). For non-interactive use, set `KEYSHIFT_KEYCHAIN_PASSWORD` instead, or pass
+`--keychain <path>` to use a separate keychain. If the certificate already exists, nothing is asked.
 
 ### Permissions
 
@@ -152,8 +162,19 @@ then review the imported rules in Settings before switching profiles.
 ## Uninstall
 
 Quit Keyshift and move it from Applications to the Trash. From a source checkout,
-`./scripts/uninstall.sh` also removes the CLI link. Add `--purge-config` to remove
-`~/.config/keyshift`.
+`./scripts/uninstall.sh` also removes the app's CLI link (and a dangling one left after a manual
+removal) and prints what it removed and what is left. Add `--purge-config` to remove
+`~/.config/keyshift`, and `--reset-permissions` to clear the Accessibility and Input Monitoring grants.
+
+Removing the app by hand leaves these behind:
+
+- **Login item.** If Launch at login was on (the default), turn it off in Keyshift's Settings before
+  uninstalling, or remove Keyshift under **System Settings → General → Login Items & Extensions**.
+- **Permissions.** Remove Keyshift under **Privacy & Security → Accessibility** and **Input Monitoring**,
+  or run `tccutil reset All io.github.ozanhakantunca.keyshift`.
+- **CLI link.** If you installed with `--with-cli`, delete the dangling link:
+  `rm /usr/local/bin/keyshift` or `rm ~/.local/bin/keyshift`.
+- **Settings.** `rm -r ~/.config/keyshift`.
 
 ## Compared with Karabiner-Elements
 

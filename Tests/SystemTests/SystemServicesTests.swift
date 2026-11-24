@@ -31,6 +31,65 @@ final class SystemServicesTests: XCTestCase {
         XCTAssertEqual(finder?.path, "/System/Library/CoreServices/Finder.app")
     }
 
+    func testDirectPathsInEveryRootPrecedeEnumeration() throws {
+        let files = FileManager.default
+        let root = files.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? files.removeItem(at: root) }
+        let first = root.appendingPathComponent("First", isDirectory: true)
+        let second = root.appendingPathComponent("Second", isDirectory: true)
+        try createApp(at: first.appendingPathComponent("Nested/Tool.app", isDirectory: true),
+                      bundleID: "io.keyshift.nested", displayName: "Tool")
+        let direct = second.appendingPathComponent("Tool.app", isDirectory: true)
+        try createApp(at: direct, bundleID: "io.keyshift.direct", displayName: "Tool")
+
+        let resolved = ApplicationResolver.resolve("Tool", roots: [first, second], bundleURL: { _ in nil })
+        XCTAssertEqual(resolved?.standardizedFileURL.path, direct.standardizedFileURL.path)
+    }
+
+    func testApplicationCacheRevalidatesCachedURL() throws {
+        let files = FileManager.default
+        let root = files.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? files.removeItem(at: root) }
+        let app = root.appendingPathComponent("Cached.app", isDirectory: true)
+        try createApp(at: app, bundleID: "io.keyshift.cached", displayName: "Cached")
+
+        var cache = ApplicationCache()
+        var lookups = 0
+        let resolve: (String) -> URL? = { _ in
+            lookups += 1
+            return files.fileExists(atPath: app.path) ? app : nil
+        }
+        XCTAssertEqual(cache.url(for: "Cached", resolve: resolve), app)
+        XCTAssertEqual(cache.url(for: "Cached", resolve: resolve), app)
+        XCTAssertEqual(lookups, 1)
+        try files.removeItem(at: app)
+        XCTAssertNil(cache.url(for: "Cached", resolve: resolve))
+        XCTAssertNil(cache.url(for: "Cached", resolve: resolve))
+        XCTAssertEqual(lookups, 3)
+    }
+
+    func testSpawnRunsCommandAndReapsChild() throws {
+        XCTAssertNotNil(ActionExecutor.setDisclaim, "responsibility_spawnattrs_setdisclaim is missing")
+        let exited = expectation(description: "child exited")
+        let status = Locked<Int32?>(nil)
+        let pid = ActionExecutor.spawn("/bin/sh", ["-c", "exit 3"], disclaimingResponsibility: true) {
+            status.value = $0
+            exited.fulfill()
+        }
+        XCTAssertNotNil(pid)
+        wait(for: [exited], timeout: 5)
+        let raw = try XCTUnwrap(status.value)
+        XCTAssertEqual(raw & 0x7f, 0, "terminated by a signal")
+        XCTAssertEqual((raw >> 8) & 0xff, 3)
+        // Already reaped by the helper.
+        var again: Int32 = 0
+        XCTAssertEqual(waitpid(try XCTUnwrap(pid), &again, WNOHANG), -1)
+
+        XCTAssertNil(ActionExecutor.spawn("/nonexistent/keyshift-test", [], disclaimingResponsibility: false))
+    }
+
     func testSymbolicHotKeysParseEnabledKeyboardBindingsOnly() throws {
         let command = Int(CGEventFlags.maskCommand.rawValue)
         let control = Int(CGEventFlags.maskControl.rawValue)
@@ -90,5 +149,15 @@ final class SystemServicesTests: XCTestCase {
 
     private func hotkey(_ parameters: [Int], enabled: Bool = true, type: String = "standard") -> [String: Any] {
         ["enabled": enabled, "value": ["type": type, "parameters": parameters]]
+    }
+}
+
+private final class Locked<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+    init(_ value: Value) { stored = value }
+    var value: Value {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
     }
 }

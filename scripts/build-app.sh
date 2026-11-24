@@ -19,6 +19,8 @@ Environment:
                         Each architecture uses its own subdirectory.
   KEYSHIFT_SIGN_IDENTITY   Signing name/hash; '-' forces ad-hoc signing.
                         Default: Keyshift Self-Signed if present, otherwise '-'.
+  KEYSHIFT_BUILD_NUMBER    Override CFBundleVersion. Default: major*10000 + minor*100 + patch
+                        from VERSION (0.1.1 -> 101).
   KEYSHIFT_SIGN_KEYCHAIN   Optional keychain containing the signing identity.
                         It must also be on the user's keychain search list
                         (man codesign); this script does not change that list.
@@ -90,8 +92,11 @@ else
 fi
 chmod 755 "$app/Contents/MacOS/Keyshift"
 lipo -info "$app/Contents/MacOS/Keyshift"
-build_number=$(git -C "$REPO_ROOT" rev-list --count HEAD 2>/dev/null || printf '1')
-[[ "$build_number" =~ ^[1-9][0-9]*$ ]] || build_number=1
+# Build number derived from VERSION (major*10000 + minor*100 + patch; 0.1.1 -> 101), so it does not
+# depend on git history. 0.1.0 shipped with CFBundleVersion 1; every derived number is larger.
+IFS=. read -r v_major v_minor v_patch <<< "$version"
+build_number=${KEYSHIFT_BUILD_NUMBER:-$((10#$v_major * 10000 + 10#$v_minor * 100 + 10#$v_patch))}
+[[ "$build_number" =~ ^[1-9][0-9]*$ ]] || keyshift_die "Invalid build number: $build_number"
 sed -e "s/@VERSION@/$version/g" -e "s/@BUILD_NUMBER@/$build_number/g" \
     "$REPO_ROOT/Resources/Info.plist" > "$app/Contents/Info.plist"
 if [ -f "$REPO_ROOT/Resources/AppIcon/Keyshift.icns" ]; then

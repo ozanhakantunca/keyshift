@@ -10,17 +10,21 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: swift --version
-      - run: swift build
-      - run: swift test
+      - run: swift build --force-resolved-versions
+      - run: swift test --force-resolved-versions
       - name: Validate presets
         run: ruby -ryaml -e 'Dir["Presets/*.yaml"].each { |f| YAML.load_file(f) }'
+      # Exercise the packaging path (ad-hoc signed here) so it is not first tested at tag time.
       - run: scripts/build-app.sh --arch universal
+      - run: scripts/make-dmg.sh
+      - name: Verify DMG checksum
+        run: cd dist && shasum -a 256 -c Keyshift-*.dmg.sha256
       - run: ditto -c -k --keepParent dist/Keyshift.app dist/Keyshift.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Keyshift
           path: dist/Keyshift.zip

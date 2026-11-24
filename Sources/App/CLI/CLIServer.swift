@@ -66,13 +66,17 @@ final class CLIServer {
             return CLIResponse(lines: CLI.statusLines(
                 appRunning: true, engineRunning: model.engineRunning, enabled: model.isEnabled,
                 hasConfig: model.hasConfigFile, profile: model.activeProfile?.name, permissions: model.permissions,
-                karabinerRunning: model.karabinerRunning, diagnostics: model.diagnostics.count,
-                conflicts: model.conflicts.count, startError: model.lastStartError
+                karabinerRunning: model.karabinerRunning, secureInput: model.secureInputActive,
+                diagnostics: model.diagnostics.count, conflicts: model.conflicts.count, startError: model.lastStartError,
+                usingPreviousConfig: model.usingPreviousConfig
             ))
         case .reload:
             model.reloadFromDisk()
             let diagnostics = model.diagnostics
-            return CLIResponse(lines: ["Reloaded \(model.configURL.path)."] + CLI.diagnosticLines(diagnostics, at: model.configURL),
+            let previous = model.usingPreviousConfig
+                ? ["The file could not be parsed; the previous configuration stays active."] : []
+            return CLIResponse(lines: ["Reloaded \(model.configURL.path)."] + previous
+                                   + CLI.diagnosticLines(diagnostics, at: model.configURL),
                                exitCode: ConfigEdits.hasErrors(diagnostics) ? 1 : 0)
         case .profile:
             guard let name = request.argument else { return CLIResponse(lines: CLI.profileLines(model.config)) }

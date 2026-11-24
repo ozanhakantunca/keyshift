@@ -12,8 +12,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cliServer: CLIServer?
     private var loginSetting: AnyCancellable?
     private var appliedLoginSetting: Bool?
+    private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        terminateOnSignals()
         let server = CLIServer(model: model)
         if server.start() {
             cliServer = server
@@ -50,6 +52,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             WindowRouter.showSettings()
         }
         return true
+    }
+
+    /// HID remaps outlive the process, so termination signals must go through applicationWillTerminate.
+    private func terminateOnSignals() {
+        for sig in [SIGTERM, SIGINT, SIGHUP] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler { NSApp.terminate(nil) }
+            source.resume()
+            signalSources.append(source)
+        }
     }
 
     private var needsOnboarding: Bool { !model.hasConfigFile || !model.permissions.allGranted }

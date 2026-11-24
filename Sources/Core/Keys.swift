@@ -48,6 +48,15 @@ public struct KeyCode: RawRepresentable, Sendable, Hashable, Codable, Comparable
     public var modifier: Modifiers? { KeyNames.modifierKeys[self] }
     public var isModifier: Bool { modifier != nil }
 
+    /// Keys Quartz reports with the SecondaryFn flag even on full-size keyboards (F-keys, navigation
+    /// cluster, arrows, keypad clear). Input matching ignores that flag; output adds it back.
+    public var hasImplicitFn: Bool {
+        switch rawValue {
+        case 64, 71, 79, 80, 90, 96...107, 109, 111, 113...126: return true
+        default: return false
+        }
+    }
+
     public static func named(_ s: String) -> KeyCode? { KeyNames.code(for: s) }
 }
 

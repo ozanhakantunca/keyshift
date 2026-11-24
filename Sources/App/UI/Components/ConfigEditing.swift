@@ -2,8 +2,9 @@ import Foundation
 import KeyshiftCore
 
 /// Small, pure helpers the views use inside `model.update { … }`. Rules and mappings are found by
-/// id first and by their former index second, because an external reload of the YAML file gives
-/// every item a fresh UUID while a sheet is open.
+/// id first (a reload keeps the ids of unchanged items) and by their former index second, but only
+/// while the item there still equals the snapshot the view was showing; otherwise the edit is
+/// refused with `ConfigEditError.changedOnDisk` instead of hitting a different item.
 extension Config {
     var activeProfileIndex: Int? {
         if let i = profiles.firstIndex(where: { $0.name == selectedProfile }) { return i }
@@ -11,14 +12,14 @@ extension Config {
     }
 
     /// Runs `body` on the active profile, creating a "Default" profile first when there is none.
-    mutating func editActiveProfile(_ body: (inout Profile) -> Void) {
+    mutating func editActiveProfile(_ body: (inout Profile) throws -> Void) rethrows {
         if activeProfileIndex == nil {
             let name = uniqueProfileName(String(localized: "Default"))
             profiles.append(Profile(name: name))
             selectedProfile = name
         }
         guard let index = activeProfileIndex else { return }
-        body(&profiles[index])
+        try body(&profiles[index])
     }
 
     func uniqueProfileName(_ base: String) -> String {
@@ -78,18 +79,22 @@ extension Config {
 }
 
 extension Profile {
-    func ruleIndex(id: UUID, fallback: Int?) -> Int? {
+    /// The rule `snapshot` shows. Throws when it changed or disappeared; nil only without a snapshot.
+    func ruleIndex(id: UUID, fallback: Int?, snapshot: Rule?) throws -> Int? {
         if let i = rules.firstIndex(where: { $0.id == id }) { return i }
-        if let fallback, rules.indices.contains(fallback) { return fallback }
-        return nil
+        guard let snapshot else { return nil }
+        if let fallback, rules.indices.contains(fallback), rules[fallback].contentEqual(snapshot) { return fallback }
+        throw ConfigEditError.changedOnDisk
     }
 }
 
 extension Rule {
-    func mappingIndex(id: UUID, fallback: Int?) -> Int? {
+    /// The mapping `snapshot` shows. Throws when it changed or disappeared; nil only without a snapshot.
+    func mappingIndex(id: UUID, fallback: Int?, snapshot: Mapping?) throws -> Int? {
         if let i = mappings.firstIndex(where: { $0.id == id }) { return i }
-        if let fallback, mappings.indices.contains(fallback) { return fallback }
-        return nil
+        guard let snapshot else { return nil }
+        if let fallback, mappings.indices.contains(fallback), mappings[fallback].contentEqual(snapshot) { return fallback }
+        throw ConfigEditError.changedOnDisk
     }
 }
 

@@ -18,31 +18,88 @@ public struct Diagnostic: Hashable, Sendable {
     }
 }
 
+/// The result of decoding a config document.
+public struct DecodedConfig: Sendable {
+    public var config: Config
+    public var diagnostics: [Diagnostic]
+    /// False when nothing could be read: a YAML syntax error, too many nodes, or a root that is
+    /// not a mapping. `config` is then empty because of the error, not because the file is empty.
+    public var hasUsableRoot: Bool
+
+    public init(config: Config, diagnostics: [Diagnostic], hasUsableRoot: Bool) {
+        self.config = config
+        self.diagnostics = diagnostics
+        self.hasUsableRoot = hasUsableRoot
+    }
+}
+
 public enum ConfigCodec {
+    /// Upper bound on YAML nodes after alias expansion. Real configs have a few thousand at most;
+    /// the cap stops alias "bombs" that expand a small file into billions of nodes.
+    public static let maximumNodeCount = 100_000
+
     public static func decode(_ yaml: String) -> (Config, [Diagnostic]) {
+        let decoded = decodeDocument(yaml)
+        return (decoded.config, decoded.diagnostics)
+    }
+
+    public static func decodeDocument(_ yaml: String) -> DecodedConfig {
+        let root: Node
         do {
-            guard let root = try Yams.compose(yaml: yaml) else { return (Config(), []) }
-            return decode(root)
-        } catch let error as YamlError {
-            switch error {
-            case let .scanner(_, problem, mark, _), let .parser(_, problem, mark, _),
-                 let .composer(_, problem, mark, _):
-                return (Config(), [Diagnostic(line: mark.line, message: problem)])
-            case let .duplicatedKeysInMapping(duplicates, _):
-                let diagnostics = duplicates.values.flatMap { nodes in
-                    nodes.sorted { ($0.mark?.line ?? 0, $0.mark?.column ?? 0) <
-                        ($1.mark?.line ?? 0, $1.mark?.column ?? 0) }.dropFirst().map { node in
-                        Diagnostic(line: node.mark?.line, message: "Duplicate YAML key '\(node.scalar?.string ?? "")'.")
-                    }
-                }
-                return (Config(), diagnostics.sorted {
-                    ($0.line ?? 0, $0.message) < ($1.line ?? 0, $1.message)
-                })
-            default:
-                return (Config(), [Diagnostic(message: String(describing: error))])
+            guard let composed = try Yams.compose(yaml: yaml) else {
+                return DecodedConfig(config: Config(), diagnostics: [], hasUsableRoot: true)
             }
+            root = composed
         } catch {
-            return (Config(), [Diagnostic(message: error.localizedDescription)])
+            return DecodedConfig(config: Config(), diagnostics: syntaxDiagnostics(error), hasUsableRoot: false)
+        }
+        guard !exceedsNodeLimit(root) else {
+            let message = "Config has more than \(maximumNodeCount) YAML nodes after expanding aliases. "
+                + "Remove YAML anchors and aliases (&name, *name)."
+            return DecodedConfig(config: Config(), diagnostics: [Diagnostic(message: message)], hasUsableRoot: false)
+        }
+        let (config, diagnostics) = decode(root)
+        return DecodedConfig(config: config, diagnostics: diagnostics, hasUsableRoot: root.mapping != nil)
+    }
+
+    /// Counts nodes with an explicit stack and stops at the limit, so expanded aliases are never walked in full.
+    static func exceedsNodeLimit(_ root: Node, limit: Int = maximumNodeCount) -> Bool {
+        var stack = [root]
+        var count = 0
+        while let node = stack.popLast() {
+            count += 1
+            if count > limit { return true }
+            switch node {
+            case .mapping(let mapping):
+                for (key, value) in mapping {
+                    stack.append(key)
+                    stack.append(value)
+                }
+            case .sequence(let sequence):
+                stack.append(contentsOf: sequence)
+            case .scalar, .alias:
+                break
+            }
+        }
+        return false
+    }
+
+    private static func syntaxDiagnostics(_ error: Error) -> [Diagnostic] {
+        guard let error = error as? YamlError else { return [Diagnostic(message: error.localizedDescription)] }
+        switch error {
+        case let .scanner(_, problem, mark, _), let .parser(_, problem, mark, _),
+             let .composer(_, problem, mark, _):
+            return [Diagnostic(line: mark.line, message: problem)]
+        case let .duplicatedKeysInMapping(duplicates, _):
+            let diagnostics = duplicates.values.flatMap { nodes in
+                nodes.sorted { ($0.mark?.line ?? 0, $0.mark?.column ?? 0) <
+                    ($1.mark?.line ?? 0, $1.mark?.column ?? 0) }.dropFirst().map { node in
+                    Diagnostic(line: node.mark?.line, message: "Duplicate YAML key '\(node.scalar?.string ?? "")'.")
+                }
+            }
+            return diagnostics.sorted { ($0.line ?? 0, $0.message) < ($1.line ?? 0, $1.message) }
+        default:
+            return [Diagnostic(message: String(describing: error))]
         }
     }
 
@@ -301,7 +358,7 @@ private struct ConfigDecoder {
                 continue
             }
             guard allowed.contains(name) else {
-                report(key, "Unknown \(label.lowercased()) field '\(name)'.", .warning)
+                report(key, "Unknown \(label.lowercased()) field '\(name)'. It is ignored and is removed when Keyshift saves the file.", .warning)
                 continue
             }
             fields[name] = value

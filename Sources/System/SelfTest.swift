@@ -25,6 +25,7 @@ public enum SelfTest {
 
     /// Posts an ordinary key pair through the HID entry point and inspects it after the
     /// backend's session tap. The backend must already be configured for the chosen remap.
+    /// The observer swallows the marked probe so it never reaches the frontmost app.
     public static func run(
         backend: EventTapBackend, input: KeyCombo = KeyCombo(KeyCode(8), .control),
         expected: KeyCombo = KeyCombo(KeyCode(8), .command), timeout: TimeInterval = 0.75
@@ -42,14 +43,20 @@ public enum SelfTest {
         let mask = (CGEventMask(1) << CGEventType.keyDown.rawValue)
             | (CGEventMask(1) << CGEventType.keyUp.rawValue)
         guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap, place: .tailAppendEventTap, options: .listenOnly,
+            tap: .cgSessionEventTap, place: .tailAppendEventTap, options: .defaultTap,
             eventsOfInterest: mask, callback: { _, type, event, data in
-                if let data { Unmanaged<Capture>.fromOpaque(data).takeUnretainedValue().record(event, type: type) }
-                return Unmanaged.passUnretained(event)
+                guard let data else { return Unmanaged.passUnretained(event) }
+                return Unmanaged<Capture>.fromOpaque(data).takeUnretainedValue().observe(event, type: type)
             },
             userInfo: Unmanaged.passUnretained(capture).toOpaque()
         ) else { return result(.observerUnavailable) }
-        defer { CFMachPortInvalidate(tap) }
+        // An active tap that nobody services would stall all key events; enable it only while running.
+        CGEvent.tapEnable(tap: tap, enable: false)
+        capture.tap = tap
+        defer {
+            capture.tap = nil
+            CFMachPortInvalidate(tap)
+        }
         guard let source = CFMachPortCreateRunLoopSource(nil, tap, 0) else { return result(.observerUnavailable) }
         let runLoop = CFRunLoopGetCurrent()
         let mode = CFRunLoopMode("Keyshift self-test" as CFString)
@@ -64,6 +71,9 @@ public enum SelfTest {
               let down = EventCodec.makeEvent(.keyDown(input.key, input.modifiers, isRepeat: false), source: probeSource),
               let up = EventCodec.makeEvent(.keyUp(input.key, input.modifiers), source: probeSource)
         else { return result(.eventCreationFailed) }
+        // An in-place rewrite by the backend keeps this field.
+        down.setIntegerValueField(.eventSourceUserData, value: capture.marker)
+        up.setIntegerValueField(.eventSourceUserData, value: capture.marker)
 
         CGEvent.tapEnable(tap: tap, enable: true)
         down.post(tap: .cghidEventTap)
@@ -75,6 +85,8 @@ public enum SelfTest {
     }
 
     private final class Capture {
+        let marker = Int64.random(in: 1..<EventCodec.syntheticTag)
+        var tap: CFMachPort?
         private let inputKey: KeyCode
         private let expected: KeyCombo
         private let processID = Int64(getpid())
@@ -90,7 +102,16 @@ public enum SelfTest {
             )))
         }
 
-        func record(_ event: CGEvent, type: CGEventType) {
+        func observe(_ event: CGEvent, type: CGEventType) -> Unmanaged<CGEvent>? {
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+                return Unmanaged.passUnretained(event)
+            }
+            record(event, type: type)
+            return event.getIntegerValueField(.eventSourceUserData) == marker ? nil : Unmanaged.passUnretained(event)
+        }
+
+        private func record(_ event: CGEvent, type: CGEventType) {
             guard type == .keyDown || type == .keyUp,
                   event.getIntegerValueField(.eventSourceUnixProcessID) == processID,
                   let decoded = EventCodec.decode(event, type: type),

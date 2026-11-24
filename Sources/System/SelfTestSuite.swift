@@ -159,7 +159,7 @@ public enum SelfTestSuite {
     private static func keyObservation(_ key: KeyCode, _ modifiers: Modifiers, down: Bool,
                                        repeatKey: Bool = false) -> InputEvent {
         var mods = modifiers
-        if EventCodec.hasIntrinsicFnFlag(key) { mods.insert(.function) }
+        if key.hasImplicitFn { mods.insert(.function) }
         if down, let modifier = key.modifier { mods.insert(modifier) }
         let kind: InputEvent.Kind = key.isModifier ? .flagsChanged(isDown: down) : down ? .keyDown : .keyUp
         return InputEvent(kind: kind, key: key, modifiers: mods, isRepeat: repeatKey)
@@ -168,7 +168,7 @@ public enum SelfTestSuite {
     private static func describe(events: [InputEvent], actions: [Action]) -> String {
         let inputs = events.map { event in
             var modifiers = event.modifiers
-            if EventCodec.hasIntrinsicFnFlag(event.key) { modifiers.remove(.function) }
+            if event.key.hasImplicitFn { modifiers.remove(.function) }
             if let modifier = event.key.modifier { modifiers.remove(modifier) }
             let key = KeyCombo(event.key, modifiers).displayString
             switch event.kind {

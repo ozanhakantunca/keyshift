@@ -73,25 +73,41 @@ if ! mv "$stage/Keyshift.app" "$destination"; then
     keyshift_die "Cannot install $destination"
 fi
 printf 'Installed %s\n' "$destination"
+cli_failed=false
 if [ "$with_cli" = true ]; then
-    cli_dir=$(keyshift_cli_bin_dir)
-    mkdir -p "$cli_dir"
-    cli_dir=$(cd "$cli_dir" && pwd)
-    cli_link="$cli_dir/keyshift"
-    if [ -e "$cli_link" ] || [ -L "$cli_link" ]; then
-        [ -L "$cli_link" ] && [ "$(readlink "$cli_link")" = "$destination/Contents/MacOS/Keyshift" ] ||
-            keyshift_die "Refusing to replace unrelated CLI path: $cli_link"
-    else
-        ln -s "$destination/Contents/MacOS/Keyshift" "$cli_link"
-    fi
-    printf 'CLI installed: %s\n' "$cli_link"
-    case ":$PATH:" in
-        *":$cli_dir:"*) ;;
-        *) printf 'Add %s to PATH, for example: export PATH="%s:$PATH"\n' "$cli_dir" "$cli_dir" ;;
-    esac
+    # A CLI problem must not stop the app from launching; report it at the end instead.
+    if (
+        cli_dir=$(keyshift_cli_bin_dir)
+        mkdir -p "$cli_dir" || keyshift_die "Cannot create $cli_dir"
+        cli_dir=$(cd "$cli_dir" && pwd) || keyshift_die "Cannot enter $cli_dir"
+        cli_link="$cli_dir/keyshift"
+        target="$destination/Contents/MacOS/Keyshift"
+        if [ -e "$cli_link" ] || [ -L "$cli_link" ]; then
+            # Replace only a symlink that points at some Keyshift install (e.g. another prefix).
+            if [ -L "$cli_link" ]; then
+                case "$(readlink "$cli_link")" in
+                    */Keyshift.app/Contents/MacOS/Keyshift) ;;
+                    *) keyshift_die "Refusing to replace unrelated CLI path: $cli_link" ;;
+                esac
+            else
+                keyshift_die "Refusing to replace unrelated CLI path: $cli_link"
+            fi
+            ln -sfn "$target" "$cli_link" || keyshift_die "Cannot replace $cli_link"
+        else
+            ln -s "$target" "$cli_link" || keyshift_die "Cannot create $cli_link"
+        fi
+        printf 'CLI installed: %s\n' "$cli_link"
+        case ":$PATH:" in
+            *":$cli_dir:"*) ;;
+            *) printf 'Add %s to PATH, for example: export PATH="%s:$PATH"\n' "$cli_dir" "$cli_dir" ;;
+        esac
+    ); then :; else cli_failed=true; fi
 fi
 if [ "$launch" = true ]; then
     open "$destination" || keyshift_die "Installed, but could not launch $destination"
 else
     printf 'Launch skipped (--no-launch).\n'
+fi
+if [ "$cli_failed" = true ]; then
+    keyshift_die 'Keyshift was installed, but the CLI link could not be created (see above).'
 fi

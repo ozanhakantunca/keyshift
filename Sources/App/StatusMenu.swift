@@ -74,7 +74,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             profileItem.state = profile.id == model.activeProfile?.id ? .on : .off
             profilesMenu.addItem(profileItem)
         }
-        profilesItem.isEnabled = !model.config.profiles.isEmpty
+        // Switching profiles saves the file, which is refused while it has errors.
+        profilesItem.isEnabled = !model.config.profiles.isEmpty && !model.configHasErrors
 
         let needsSetup = !model.permissions.allGranted || !model.hasConfigFile
         if !model.permissions.allGranted {
@@ -83,10 +84,13 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             statusLine.title = String(localized: "Set up Keyshift…")
         } else if !model.engineRunning {
             statusLine.title = String(localized: "Engine stopped")
+        } else if model.isEnabled && model.secureInputActive {
+            statusLine.title = String(localized: "Paused by macOS (secure input)")
         } else {
             statusLine.title = model.isEnabled ? String(localized: "Running") : String(localized: "Paused")
         }
         statusLine.toolTip = model.lastStartError
+            ?? (model.configHasErrors ? String(localized: "The config file has errors. Fix the file before editing here.") : nil)
         statusLine.action = needsSetup ? #selector(showOnboarding) : nil
         statusLine.isEnabled = needsSetup
         warningLine.isHidden = !model.karabinerRunning

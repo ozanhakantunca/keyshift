@@ -48,6 +48,15 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastStartError: String?
     @Published private(set) var permissions = PermissionState()
     @Published private(set) var karabinerRunning = false
+    /// The file on disk has error-level diagnostics: edits from the UI, menu and CLI are refused
+    /// so the parts Keyshift could not read are not overwritten.
+    @Published private(set) var configHasErrors = false
+    /// The file could not be parsed at all; the engine keeps running the last configuration that loaded.
+    @Published private(set) var usingPreviousConfig = false
+    /// An app holds Secure Event Input, so macOS delivers no key events to the event tap.
+    @Published private(set) var secureInputActive = false
+    /// Last failed edit or file operation, shown as a banner until dismissed or the next successful save.
+    @Published private(set) var operationError: String?
     /// Filled only while `eventViewerActive` is true; newest first, capped (~200).
     @Published private(set) var recentEvents: [EventLogEntry] = []
     @Published var eventViewerActive = false {
@@ -72,8 +81,14 @@ final class AppModel: ObservableObject {
     private var recording = false
     private var plan = ModifierRemapper.plan(for: Config())
     private var configDiagnostics: [Diagnostic] = []
-    private var fileDiagnostic: Diagnostic?
+    /// Warnings about mappings in the active profile that can never fire.
+    private var mappingDiagnostics: [Diagnostic] = []
     private var hidDiagnostic: Diagnostic?
+    /// The bytes last read from or written to the file (nil: missing or unreadable). A save is
+    /// refused when the file no longer holds them, so an external edit is never overwritten.
+    private var diskContents: Data?
+    /// True once a config read from (or written to) the file is installed.
+    private var hasInstalledFileConfig = false
     private var ruleNames: [UUID: String] = [:]
 
     init(store: ConfigStore = ConfigStore()) {
@@ -88,13 +103,14 @@ final class AppModel: ObservableObject {
         started = true
         permissions = readPermissions()
         karabinerRunning = KarabinerDetector.isRunning()
+        secureInputActive = SecureInput.isEnabled()
         backend.setKeyLayout(KeyboardLayout.currentMap())
         layoutObservation = DistributedNotificationCenter.default().addObserver(
             forName: KeyboardLayout.changeNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.backend.setKeyLayout(KeyboardLayout.currentMap()) }
-        store.startWatching { [weak self] _, _ in
-            // Read the latest snapshot so a queued callback cannot undo a more recent reload.
-            self?.reloadFromDisk()
+        store.startWatching { [weak self] loaded in
+            // Delivered on the main queue; the store drops callbacks queued before a later save.
+            MainActor.assumeIsolated { self?.apply(loaded) }
         }
         reloadFromDisk()
         updateEventViewer()
@@ -109,6 +125,8 @@ final class AppModel: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.started else { return }
                 if self.karabinerRunning != running { self.karabinerRunning = running }
+                let secure = SecureInput.isEnabled()
+                if self.secureInputActive != secure { self.secureInputActive = secure }
                 self.refreshPermissions()
             }
         }
@@ -131,18 +149,42 @@ final class AppModel: ObservableObject {
     }
 
     func reloadFromDisk() {
-        let loaded = store.load()
-        install(loaded?.0 ?? Config(), diagnostics: loaded?.1 ?? [], hasFile: loaded != nil)
+        apply(store.loadDetailed())
     }
 
     func prepareCLIEdit() throws {
         reloadFromDisk()
-        guard !ConfigEdits.hasErrors(configDiagnostics) else { throw ConfigEditError.invalidConfig(configURL) }
+        guard !configHasErrors else { throw ConfigEditError.invalidConfig(configURL) }
     }
 
-    private func install(_ next: Config, diagnostics: [Diagnostic], hasFile: Bool) {
+    private func apply(_ loaded: LoadedConfig?) {
+        guard let loaded else {
+            diskContents = nil
+            hasInstalledFileConfig = false
+            install(Config(), engineConfig: Config(), diagnostics: [], hasFile: false)
+            return
+        }
+        diskContents = loaded.contents
+        if !loaded.hasUsableRoot && hasInstalledFileConfig {
+            // A half-typed edit must not turn every remap off: keep the running config, show the errors.
+            configDiagnostics = loaded.diagnostics
+            if !configHasErrors { configHasErrors = true }
+            if !usingPreviousConfig { usingPreviousConfig = true }
+            publishDiagnostics()
+            return
+        }
+        // Keep the ids of unchanged items so open sheets still find what they were opened for.
+        var reloaded = loaded
+        reloaded.config = ConfigEdits.carryingIDs(from: config, to: loaded.config)
+        hasInstalledFileConfig = loaded.hasUsableRoot
+        install(reloaded.config, engineConfig: reloaded.engineConfig, diagnostics: loaded.diagnostics, hasFile: true)
+    }
+
+    private func install(_ next: Config, engineConfig: Config, diagnostics: [Diagnostic], hasFile: Bool) {
         configDiagnostics = diagnostics
-        fileDiagnostic = nil
+        let hasErrors = ConfigEdits.hasErrors(diagnostics)
+        if configHasErrors != hasErrors { configHasErrors = hasErrors }
+        if usingPreviousConfig { usingPreviousConfig = false }
         systemShortcuts = SystemShortcuts.enabled()
         conflicts = ConfigEdits.conflicts(in: next, shortcuts: systemShortcuts)
         hasConfigFile = hasFile
@@ -150,7 +192,10 @@ final class AppModel: ObservableObject {
         var names: [UUID: String] = [:]
         for rule in next.activeProfile?.rules ?? [] { names[rule.id] = rule.name }
         ruleNames = names
-        plan = ModifierRemapper.plan(for: next)
+        mappingDiagnostics = next.activeProfile.map { profile in
+            ModifierKeyCheck.diagnostics(in: profile) { ModifierRemapper.hidUsage(for: $0) != nil }
+        } ?? []
+        plan = ModifierRemapper.plan(for: engineConfig)
         if started {
             backend.reload(plan.eventTapConfig)
             reconcileBackend(reapplyHID: true)
@@ -211,29 +256,44 @@ final class AppModel: ObservableObject {
     }
 
     private func publishDiagnostics() {
-        let next = configDiagnostics + [fileDiagnostic, hidDiagnostic].compactMap { $0 }
+        let next = configDiagnostics + mappingDiagnostics + [hidDiagnostic].compactMap { $0 }
         if diagnostics != next { diagnostics = next }
     }
 
     // MARK: Editing (UI calls these; each saves the file and hot-reloads the engine)
     /// Apply any change to the config. Saves (with .bak), recomputes diagnostics/conflicts, reloads engine.
-    func update(_ mutate: (inout Config) -> Void) {
-        reportFileError { try saveUpdate(mutate) }
+    /// Failures (including a file with errors or one changed on disk) are shown as `operationError`.
+    /// `overridingErrors` replaces a file with errors; only for an explicit user choice (onboarding).
+    func update(overridingErrors: Bool = false, _ mutate: (inout Config) throws -> Void) {
+        reportFileError { try saveUpdate(overridingErrors: overridingErrors, mutate) }
     }
 
-    func saveUpdate(_ mutate: (inout Config) throws -> Void) throws {
+    func saveUpdate(overridingErrors: Bool = false, _ mutate: (inout Config) throws -> Void) throws {
+        guard overridingErrors || !configHasErrors else { throw ConfigEditError.fileHasErrors }
         var next = config
         try mutate(&next)
-        try store.save(next)
-        install(next, diagnostics: ConfigCodec.decode(ConfigCodec.encode(next)).1, hasFile: true)
+        let saved: LoadedConfig
+        do {
+            saved = try store.save(next, condition: .unchangedSince(diskContents))
+        } catch ConfigStoreError.changedOnDisk {
+            reloadFromDisk()
+            throw ConfigEditError.changedOnDisk
+        }
+        diskContents = saved.contents
+        hasInstalledFileConfig = true
+        if operationError != nil { operationError = nil }
+        install(next, engineConfig: saved.engineConfig, diagnostics: saved.diagnostics, hasFile: true)
+    }
+
+    func dismissOperationError() {
+        operationError = nil
     }
 
     private func reportFileError(_ operation: () throws -> Void) {
         do {
             try operation()
         } catch {
-            fileDiagnostic = Diagnostic(message: error.localizedDescription)
-            publishDiagnostics()
+            operationError = error.localizedDescription
         }
     }
 
@@ -247,17 +307,18 @@ final class AppModel: ObservableObject {
     }
 
     /// Adds the preset as a new profile (unique name) and merges its app groups; selects it.
-    func applyPreset(_ id: String) {
+    func applyPreset(_ id: String, overridingErrors: Bool = false) {
         guard let (profile, groups) = Presets.load(id) else { return }
         let preset = Config(appGroups: groups, profiles: [profile])
-        update { ConfigEdits.append(preset, to: &$0, selectIncoming: true) }
+        update(overridingErrors: overridingErrors) { ConfigEdits.append(preset, to: &$0, selectIncoming: true) }
     }
 
     /// Imports karabiner.json (default ~/.config/karabiner/karabiner.json); adds its profiles, merges groups.
-    func importKarabiner(from url: URL? = nil) throws -> ImportReport {
+    func importKarabiner(from url: URL? = nil, overridingErrors: Bool = false) throws -> ImportReport {
+        guard overridingErrors || !configHasErrors else { throw ConfigEditError.fileHasErrors }
         let (incoming, report) = try KarabinerImporter.importFile(at: url ?? ConfigEdits.defaultKarabinerURL)
         if !incoming.profiles.isEmpty {
-            try saveUpdate { ConfigEdits.append(incoming, to: &$0) }
+            try saveUpdate(overridingErrors: overridingErrors) { ConfigEdits.append(incoming, to: &$0) }
         }
         return report
     }
@@ -270,6 +331,8 @@ final class AppModel: ObservableObject {
 
     func runSelfTest() throws -> SelfTest.Result {
         guard !recording else { throw ConfigEditError.recording }
+        // The probe swaps in a test config and un-pauses the backend; never while the user turned Keyshift off.
+        guard isEnabled else { throw ConfigEditError.remappingDisabled }
         guard engineRunning else { return SelfTest.run(backend: backend) }
 
         let input = KeyCombo(KeyCode(8), .control)
