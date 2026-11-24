@@ -135,6 +135,13 @@ final class ConfigCodecTests: XCTestCase {
         XCTAssertEqual(profile.rules.first?.mappings.map(\.trigger.description), ["ctrl+a", "ctrl+z", "n"])
     }
 
+    func testReportsDuplicateYAMLKeys() {
+        let (_, diagnostics) = ConfigCodec.decode("version: 1\nprofile: A\nprofile: B\n")
+        XCTAssertEqual(diagnostics.map(\.message), ["Duplicate YAML key 'profile'."])
+        XCTAssertNotNil(diagnostics.first?.line)
+        XCTAssertEqual(diagnostics.first?.severity, .error)
+    }
+
     func testReportsYAMLSyntaxAtSourceLine() {
         let (_, diagnostics) = ConfigCodec.decode("profiles: [\n")
         XCTAssertEqual(diagnostics.count, 1)
