@@ -9,7 +9,7 @@ let package = Package(
         .executable(name: "Keyshift", targets: ["Keyshift"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.0"),
+        .package(url: "https://github.com/jpsim/Yams.git", from: "6.2.2"),
     ],
     targets: [
         // Menu bar app, settings UI, onboarding, CLI. Bundled into Keyshift.app by scripts/build-app.sh
